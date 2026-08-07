@@ -2,6 +2,11 @@
 
 A standalone Windows utility that refreshes a portable [ES-DE (EmulationStation Desktop Edition)](https://es-de.org/) installation — **upgrades**, **downgrades**, and **same-version repairs** — while preserving your games, emulators, and settings.
 
+## Screenshots
+
+![Main window (dark theme)](main%20menu.png)
+![Settings window](settings%20menu.png)
+
 ## Features
 
 | Feature | Description |
