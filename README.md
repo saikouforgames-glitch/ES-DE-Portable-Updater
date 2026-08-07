@@ -1,6 +1,10 @@
 # ES-DE Portable Updater
 
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+
 A standalone Windows utility that refreshes a portable [ES-DE (EmulationStation Desktop Edition)](https://es-de.org/) installation — **upgrades**, **downgrades**, and **same-version repairs** — while preserving your games, emulators, and settings.
+
+> **Windows only** — uses Robocopy and Windows Forms (`net8.0-windows`). Requires 64-bit Windows; does not run on Linux or macOS.
 
 ## Screenshots
 
