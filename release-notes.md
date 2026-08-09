@@ -6,10 +6,6 @@ A standalone Windows utility that refreshes a portable [ES-DE](https://es-de.org
 
 ### What's New in v1.1.1
 
-**New features**
-
-- **About dialog** — a new "About" button next to "Settings" shows the version, author, license (MIT), and quick links to the GitHub repo, documentation, and the ES-DE official site.
-
 **Fixes**
 
 - Release notes now correctly display on the GitHub Releases page.

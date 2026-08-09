@@ -73,7 +73,6 @@ ESDEUpdater/
 ├── Program.cs
 ├── MainForm.cs / MainForm.Designer.cs
 ├── SettingsForm.cs / SettingsForm.Designer.cs
-├── AboutForm.cs / AboutForm.Designer.cs
 ├── AppSettings.cs / SettingsService.cs
 ├── BackupService.cs / RobocopyService.cs
 ├── ReleaseService.cs / EsDeVersionService.cs

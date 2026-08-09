@@ -84,7 +84,6 @@ The updater's main goal is to **prevent accidental data loss**. Every feature pr
 |---------|---------|
 | `lblTitle` | Title: **ES-DE Portable Updater** |
 | `btnSettings` | Opens the Settings window |
-| `btnAbout` | Opens the About dialog (version, author, license, links) |
 | `lblOldFolder` / `txtOldFolder` | **Current ES-DE (In Use)** — the installation being refreshed |
 | `lblOldVersion` | Detected version of the Current folder (e.g. `v3.4.1`); blank when unreadable |
 | `btnBrowseOld` | Folder picker for the Current folder |
@@ -415,8 +414,6 @@ ESDEUpdater/
 ├── MainForm.Designer.cs
 ├── SettingsForm.cs
 ├── SettingsForm.Designer.cs
-├── AboutForm.cs
-├── AboutForm.Designer.cs
 ├── AppSettings.cs
 ├── SettingsService.cs
 ├── ESDEUpdater.resx
@@ -451,7 +448,6 @@ ESDEUpdater/
 - `Program.cs` — Windows Forms entry point.
 - `MainForm.cs` / `.Designer.cs` — main window and orchestration. Key members: `UpdateDirectionUi` (version labels + Start button text), `UpdateBackupUi` (backup state + Delete Backup), `UpdatePackageUi` (package cleanup + Delete Package), `BuildCopyItemList`, `BuildBackupFolderList`, `DeleteOldProgramFiles`, the data-folder rename step, the running-program gate (`ProcessGuard`), the folder seal (`OldFolderSeal` / `VerifySealAgainstDisk`) re-verified before every destructive step, and the repair-mode banner. Re-entrancy guard `_updateRunning`.
 - `SettingsForm.cs` / `.Designer.cs` — settings dialog.
-- `AboutForm.cs` / `.Designer.cs` — About dialog (version, author, license, links).
 - `AppSettings.cs` — settings model (section 6).
 - `SettingsService.cs` — JSON load/save beside the exe.
 - `EsDeValidation.cs` / `ValidationResult.cs` / `FolderAnalysis.cs` / `FolderAnalyzer.cs` — location gates, structural validation, reversal/profile checks, and folder analysis (executable presence, data-folder name, emulator/ROM counts). Browse is box-aware (per-field messages), Start re-runs the location gates for typed/restored paths.
