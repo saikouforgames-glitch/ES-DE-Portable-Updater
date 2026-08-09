@@ -16,6 +16,20 @@ settings.json
 packages/
 release/
 
+## Release artifacts
+*.zip
+
+## Images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+
+## Compiled binaries
+*.exe
+*.dll
+
 ## OS
 Thumbs.db
 Desktop.ini

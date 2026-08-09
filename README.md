@@ -6,11 +6,6 @@ A standalone Windows utility that refreshes a portable [ES-DE (EmulationStation 
 
 > **Windows only** — uses Robocopy and Windows Forms (`net8.0-windows`). Requires 64-bit Windows; does not run on Linux or macOS.
 
-## Screenshots
-
-![Main window (dark theme)](main%20menu.png)
-![Settings window](settings%20menu.png)
-
 ## Features
 
 | Feature | Description |
