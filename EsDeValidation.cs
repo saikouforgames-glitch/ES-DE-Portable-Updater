@@ -12,13 +12,31 @@ public static class EsDeValidation
     /// Quick browse-time check for the Old ES-DE folder.
     /// Returns null when the folder is acceptable, or a user-facing error string.
     /// </summary>
-    public static string? ValidateOldFolder(string? path) => ValidateSingleFolder(path, isOld: true);
+    public static string? ValidateOldFolder(string? path)
+    {
+        var gateError = ValidationGate.CheckOldLocation(path);
+        if (gateError is not null)
+        {
+            return gateError;
+        }
+
+        return ValidateSingleFolder(path, isOld: true);
+    }
 
     /// <summary>
     /// Quick browse-time check for the New ES-DE folder.
     /// Returns null when the folder is acceptable, or a user-facing error string.
     /// </summary>
-    public static string? ValidateNewFolder(string? path) => ValidateSingleFolder(path, isOld: false);
+    public static string? ValidateNewFolder(string? path)
+    {
+        var gateError = ValidationGate.CheckNewLocation(path);
+        if (gateError is not null)
+        {
+            return gateError;
+        }
+
+        return ValidateSingleFolder(path, isOld: false);
+    }
 
     private static string? ValidateSingleFolder(string? path, bool isOld)
     {
@@ -35,12 +53,75 @@ public static class EsDeValidation
             return $"The {label} ES-DE folder does not exist:\n{fullPath}";
         }
 
-        if (!FolderAnalyzer.HasExecutableInRoot(fullPath))
+        if (!isOld && !FolderAnalyzer.HasEsDeExecutable(fullPath))
         {
-            return $"No executable (.exe) was found in the {label} ES-DE folder:\n{fullPath}";
+            return
+                "No ES-DE executable was found in the Package folder:\n" +
+                fullPath + "\n\n" +
+                "A freshly extracted ES-DE portable package always contains " +
+                "ES-DE.exe (modern releases) or EmulationStation.exe (older 2.x releases). " +
+                "If the executable was renamed or removed, this folder cannot be installed as a package.";
+        }
+
+        if (isOld)
+        {
+            var dataFolderError = CheckEsDeStructurePresence(fullPath);
+            if (dataFolderError is not null)
+            {
+                return dataFolderError;
+            }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Cheap browse-time structure check for the Current folder: the three ES-DE
+    /// signature folders must exist (Emulators, ROMs, and a user data folder).
+    /// No counting and no executable requirement, so an installation whose
+    /// executable is missing or damaged still passes (repair mode).
+    /// </summary>
+    private static string? CheckEsDeStructurePresence(string rootPath)
+    {
+        foreach (var folderName in RequiredFolders)
+        {
+            if (!Directory.Exists(Path.Combine(rootPath, folderName)))
+            {
+                var message =
+                    $"The Current ES-DE folder is missing the \"{folderName}\" directory.\n\n" +
+                    "A normal ES-DE portable installation contains Emulators, ES-DE, and ROMs folders.\n\n" +
+                    "This may not be a valid ES-DE installation, or you may have selected the wrong folder.";
+
+                if (LooksLikeDataFolder(rootPath))
+                {
+                    message +=
+                        "\n\nYou selected a folder named \"" + Path.GetFileName(rootPath) +
+                        "\", which is the ES-DE user data folder inside a package.\n" +
+                        "Select the folder that contains it (the package root, where ES-DE.exe sits) as the Package instead.";
+                }
+
+                return message;
+            }
+        }
+
+        if (FolderAnalyzer.FindEsDeDataFolder(rootPath) is null)
+        {
+            return
+                "No ES-DE user data folder was found in the Current ES-DE folder.\n\n" +
+                "An ES-DE installation stores its user data (settings, gamelists, themes) in a folder named " +
+                "\"ES-DE\" (version 3.0.0 and newer) or \".emulationstation\" (older releases).\n\n" +
+                "What to do:\n" +
+                "Verify you selected the folder that contains your existing ES-DE installation.";
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeDataFolder(string rootPath)
+    {
+        var name = Path.GetFileName(rootPath.TrimEnd('\\', '/'));
+        return string.Equals(name, FolderNames.EsDe, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, FolderNames.EmulationStation, StringComparison.OrdinalIgnoreCase);
     }
 
     public static ValidationResult ValidateForUpdate(string oldPath, string newPath)
@@ -55,15 +136,31 @@ public static class EsDeValidation
                 "The Current ES-DE folder path is empty.\n\nPlease click Browse next to \"Current ES-DE\" and select your current installation.");
         }
 
-        if (!oldPathIsEmpty && !newPathIsEmpty &&
-            string.Equals(
-                Path.GetFullPath(oldPath.Trim()),
-                Path.GetFullPath(newPath.Trim()),
-                StringComparison.OrdinalIgnoreCase))
+        if (!oldPathIsEmpty)
         {
-            return ValidationResult.Failure(
-                "Validation Failed",
-                "The Current ES-DE and Package folders are the same path.\n\nYou must select two different folders: your current installation and the package you extracted.");
+            var oldGateError = ValidationGate.CheckOldLocation(oldPath);
+            if (oldGateError is not null)
+            {
+                return ValidationResult.Failure("Validation Failed", oldGateError);
+            }
+        }
+
+        if (!newPathIsEmpty)
+        {
+            var newGateError = ValidationGate.CheckNewLocation(newPath);
+            if (newGateError is not null)
+            {
+                return ValidationResult.Failure("Validation Failed", newGateError);
+            }
+        }
+
+        if (!oldPathIsEmpty && !newPathIsEmpty)
+        {
+            var relationshipError = ValidationGate.CheckRelationship(oldPath, newPath);
+            if (relationshipError is not null)
+            {
+                return ValidationResult.Failure("Validation Failed", relationshipError);
+            }
         }
 
         FolderAnalysis? old = null;
@@ -150,6 +247,18 @@ public static class EsDeValidation
 
     private static ValidationResult? ValidateSingleOldFolder(FolderAnalysis old)
     {
+        var gateError = ValidationGate.CheckOldLocation(old.RootPath);
+        if (gateError is not null)
+        {
+            return ValidationResult.Failure(
+                "Validation Failed",
+                gateError + "\n\n" +
+                "Note: the Package folder is also empty. Once the Current ES-DE folder issue is fixed, " +
+                "please select the ES-DE version you extracted as the Package folder.",
+                old,
+                null);
+        }
+
         var error = CheckFolderBasics(old, isOld: true, other: null)
             ?? CheckOldProfile(old, other: null);
 
@@ -169,6 +278,18 @@ public static class EsDeValidation
 
     private static ValidationResult? ValidateSingleNewFolder(FolderAnalysis newAnalysis)
     {
+        var gateError = ValidationGate.CheckNewLocation(newAnalysis.RootPath);
+        if (gateError is not null)
+        {
+            return ValidationResult.Failure(
+                "Validation Failed",
+                gateError + "\n\n" +
+                "Note: the Current ES-DE folder is also empty. Once the Package folder issue is fixed, " +
+                "please select your current installation as the Current folder.",
+                null,
+                newAnalysis);
+        }
+
         var error = CheckFolderBasics(newAnalysis, isOld: false, other: null)
             ?? CheckNewProfile(newAnalysis, old: null);
 
@@ -198,19 +319,16 @@ public static class EsDeValidation
                 folder, other);
         }
 
-        if (!folder.HasEsDeExecutable)
+        if (!isOld && !FolderAnalyzer.HasEsDeExecutable(folder.RootPath))
         {
-            var message = isOld
-                ? "No executable (.exe) was found in the Current ES-DE folder.\n\n" +
-                  "The folder you selected does not appear to be an ES-DE portable root directory.\n\n" +
-                  "What to do:\n" +
-                  "Select the folder that directly contains the ES-DE program (not a subfolder like ES-DE or ROMs)."
-                : "No executable (.exe) was found in the Package folder.\n\n" +
-                  "The folder you selected does not appear to be a freshly extracted ES-DE portable package.\n\n" +
-                  "What to do:\n" +
-                  "Extract the new ES-DE release and select the root folder that contains the ES-DE program.";
-
-            return ValidationResult.Failure("Validation Failed", message, folder, other);
+            return ValidationResult.Failure(
+                "Validation Failed",
+                "No ES-DE executable was found in the Package folder.\n\n" +
+                "A freshly extracted ES-DE portable package always contains " +
+                "ES-DE.exe (modern releases) or EmulationStation.exe (older 2.x releases).\n\n" +
+                "What to do:\n" +
+                "Extract the new ES-DE release and select the root folder that contains the program.",
+                folder, other);
         }
 
         foreach (var folderName in RequiredFolders)

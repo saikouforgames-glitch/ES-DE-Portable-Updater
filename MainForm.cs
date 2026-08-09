@@ -2,15 +2,7 @@ namespace ESDEUpdater;
 
 public partial class MainForm : Form
 {
-    private static readonly string[] ExcludedFromCopy =
-    [
-        FolderNames.Emulators,
-        FolderNames.EsDe,
-        FolderNames.EmulationStation,
-        FolderNames.Roms,
-        FolderNames.Backup,
-        FolderNames.Updater
-    ];
+    private static readonly string[] ExcludedFromCopy = FolderNames.PreservedFolders;
 
     private enum UpdateDirection { Unknown, Same, Upgrade, Downgrade }
 
@@ -22,12 +14,15 @@ public partial class MainForm : Form
         string? PackageDataFolder,
         bool RenameDataFolder);
 
+    private sealed record OldFolderSeal(DirectoryIdentity Identity);
+
     private AppSettings _settings = new();
     private bool _updateRunning;
     private int _lastReportedDownloadPercent = -1;
     private UpdateDirection _direction = UpdateDirection.Unknown;
     private string? _currentVersion;
     private string? _packageVersion;
+    private OldFolderSeal? _seal;
 
     public MainForm()
     {
@@ -43,6 +38,16 @@ public partial class MainForm : Form
         {
             txtOldFolder.Text = _settings.LastOldPath;
             txtNewFolder.Text = _settings.LastNewPath;
+
+            if (!string.IsNullOrWhiteSpace(_settings.LastOldPath) && !Directory.Exists(_settings.LastOldPath))
+            {
+                AppendStatus($"⚠ The saved Current ES-DE folder no longer exists: {_settings.LastOldPath}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(_settings.LastNewPath) && !Directory.Exists(_settings.LastNewPath))
+            {
+                AppendStatus($"⚠ The saved Package folder no longer exists: {_settings.LastNewPath}");
+            }
         }
 
         ApplyTheme();
@@ -138,9 +143,8 @@ public partial class MainForm : Form
         if (validationError is not null)
         {
             MessageBox.Show(
-                validationError + Environment.NewLine + Environment.NewLine +
-                "Please select a valid ES-DE portable folder containing ES-DE.exe.",
-                "Invalid Folder",
+                validationError,
+                isOldFolder ? "Invalid Current ES-DE Folder" : "Invalid Package Folder",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
             return;
@@ -174,6 +178,27 @@ public partial class MainForm : Form
             return;
         }
 
+        var lockingProcesses = ProcessGuard.FindProcessFilesUnder(oldPath);
+        if (lockingProcesses.Count > 0)
+        {
+            var processList = string.Join(Environment.NewLine, lockingProcesses.Select(line => "  " + line));
+            MessageBox.Show(
+                "These program(s) are running from the Current ES-DE folder:" + Environment.NewLine +
+                Environment.NewLine +
+                processList + Environment.NewLine +
+                Environment.NewLine +
+                "Their files will be replaced during the update, so the update cannot start while they are open." +
+                Environment.NewLine +
+                Environment.NewLine +
+                "Close them, then click Start Upgrade again.",
+                "Programs Running",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        AppendStatus("↳ Running-program check: no program is running from the ES-DE folder.");
+
         UpdatePlan plan;
         try
         {
@@ -201,6 +226,17 @@ public partial class MainForm : Form
             return;
         }
 
+        var revalidation = EsDeValidation.ValidateForUpdate(oldPath, newPath);
+        if (!revalidation.IsSuccess)
+        {
+            MessageBox.Show(
+                revalidation.Message,
+                revalidation.Title,
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return;
+        }
+
         if (!plan.SpaceCheck.HasEnoughSpace)
         {
             MessageBox.Show(
@@ -214,6 +250,34 @@ public partial class MainForm : Form
                 MessageBoxIcon.Error);
             return;
         }
+
+        var canonicalOldPath = PathSafety.Canonicalize(oldPath, out var canonicalOldError);
+        if (canonicalOldError is not null)
+        {
+            MessageBox.Show(
+                canonicalOldError,
+                "Folder Verification Failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return;
+        }
+
+        var oldIdentity = PathSafety.GetDirectoryIdentity(canonicalOldPath!);
+        if (oldIdentity is null)
+        {
+            MessageBox.Show(
+                "The Current ES-DE folder could not be reopened for verification." + Environment.NewLine +
+                Environment.NewLine +
+                oldPath + Environment.NewLine +
+                Environment.NewLine +
+                "This usually means the folder or its drive is not accessible right now.",
+                "Folder Verification Failed",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return;
+        }
+
+        _seal = new OldFolderSeal(oldIdentity.Value);
 
         _updateRunning = true;
         SetControlsEnabled(false);
@@ -239,6 +303,7 @@ public partial class MainForm : Form
         finally
         {
             _updateRunning = false;
+            _seal = null;
             SetControlsEnabled(true);
             UpdateBackupUi();
             UpdatePackageUi();
@@ -309,6 +374,13 @@ public partial class MainForm : Form
         sb.AppendLine("Current:");
         sb.AppendLine($"  {(_currentVersion is not null ? $"v{_currentVersion}" : "unknown version")}");
         sb.AppendLine($"  {oldPath}");
+
+        if (!FolderAnalyzer.HasEsDeExecutable(oldPath))
+        {
+            sb.AppendLine("  \u26a0 ES-DE.exe NOT FOUND \u2014 REPAIR MODE.");
+            sb.AppendLine("  The package executable will be installed into the Current folder.");
+        }
+
         sb.AppendLine();
 
         sb.AppendLine("Package:");
@@ -400,6 +472,11 @@ public partial class MainForm : Form
         AppendStatus(BuildVersionLine("Current ES-DE", _currentVersion));
         AppendStatus(BuildVersionLine("Package", _packageVersion));
 
+        if (!FolderAnalyzer.HasEsDeExecutable(oldPath))
+        {
+            AppendStatus("⚠ ES-DE executable not found in the Current folder — repair mode: the package executable will be installed.");
+        }
+
         if (_direction is UpdateDirection.Upgrade or UpdateDirection.Downgrade &&
             !string.IsNullOrEmpty(_currentVersion) && !string.IsNullOrEmpty(_packageVersion))
         {
@@ -423,11 +500,14 @@ public partial class MainForm : Form
 
         if (plan.RenameDataFolder)
         {
+            VerifySealAgainstDisk(oldPath);
             await RenameDataFolderAsync(oldPath, plan.CurrentDataFolder!, plan.PackageDataFolder!);
         }
 
+        VerifySealAgainstDisk(oldPath);
         await Task.Run(() => DeleteOldProgramFiles(oldPath, AppendStatus));
 
+        VerifySealAgainstDisk(oldPath);
         foreach (var itemName in plan.CopyItems)
         {
             var source = Path.Combine(newPath, itemName);
@@ -473,6 +553,14 @@ public partial class MainForm : Form
 
         AppendStatus("✔ Finished.");
 
+        AppendStatus(string.Empty);
+        AppendStatus("Next steps for ES-DE:");
+        AppendStatus("  → Open ES-DE and go to Utilities → Create/update system directories");
+        AppendStatus("    to register any new game systems added in this version.");
+        AppendStatus("  → Open ES-DE → Theme Downloader to update themes for new system support.");
+        AppendStatus("  → Ensure all customizations are in the ES-DE/custom_systems/ folder.");
+        AppendStatus(string.Empty);
+
         _settings.LastOldPath = oldPath;
         _settings.LastNewPath = newPath;
         PersistSettings();
@@ -503,6 +591,26 @@ public partial class MainForm : Form
             "Update Complete",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
+    }
+
+    private void VerifySealAgainstDisk(string oldPath)
+    {
+        var canonical = PathSafety.Canonicalize(oldPath, out _);
+        var currentIdentity = canonical is null
+            ? null
+            : PathSafety.GetDirectoryIdentity(canonical);
+
+        if (_seal is null || currentIdentity is null || !currentIdentity.Value.Matches(_seal.Identity))
+        {
+            throw new InvalidOperationException(
+                "The Current ES-DE folder changed on disk after it was validated." + Environment.NewLine +
+                Environment.NewLine +
+                oldPath + Environment.NewLine +
+                Environment.NewLine +
+                "The folder was moved, replaced, or linked elsewhere while the update was running. " +
+                "The update stopped before making further changes. " +
+                "Verify the folder and start the update again.");
+        }
     }
 
     private async Task RenameDataFolderAsync(string oldPath, string currentDataFolder, string packageDataFolder)

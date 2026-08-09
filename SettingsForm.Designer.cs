@@ -66,7 +66,7 @@ partial class SettingsForm
         chkAutoDeletePackage.Name = "chkAutoDeletePackage";
         chkAutoDeletePackage.Size = new Size(297, 19);
         chkAutoDeletePackage.TabIndex = 1;
-        chkAutoDeletePackage.Text = "Auto-delete downloaded package after a successful upgrade";
+        chkAutoDeletePackage.Text = "Auto-delete downloaded package after a successful update";
         chkAutoDeletePackage.UseVisualStyleBackColor = true;
 
         grpBackup.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;

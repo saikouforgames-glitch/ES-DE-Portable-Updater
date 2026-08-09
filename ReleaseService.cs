@@ -23,7 +23,8 @@ public static class ReleaseService
 
     private const int HttpClientTimeoutSeconds = 60;
     private const int DownloadBufferSize = 81920;
-    private const string UserAgentVersion = "1.0";
+    private const int DownloadStallTimeoutSeconds = 90;
+    private const string UserAgentVersion = "1.1";
 
     private static readonly HttpClient HttpClient = CreateHttpClient();
 
@@ -205,8 +206,25 @@ public static class ReleaseService
         long totalBytes = 0;
         int bytesRead;
 
-        while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
+        while (true)
         {
+            using var stallCts = new CancellationTokenSource(TimeSpan.FromSeconds(DownloadStallTimeoutSeconds));
+            try
+            {
+                bytesRead = await stream.ReadAsync(buffer, stallCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException(
+                    $"Download stalled — no data received for {DownloadStallTimeoutSeconds} seconds. " +
+                    "Check your internet connection and try again.");
+            }
+
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
             await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead));
             totalBytes += bytesRead;
             onProgress?.Invoke(totalBytes, totalLength);
@@ -243,7 +261,7 @@ public static class ReleaseService
         var subDirectories = Directory.GetDirectories(extractDirectory);
         var files = Directory.GetFiles(extractDirectory);
 
-        if (subDirectories.Length == 1 && files.Length == 0)
+        if (subDirectories.Length == 1)
         {
             return subDirectories[0];
         }

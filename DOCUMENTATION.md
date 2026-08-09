@@ -36,7 +36,7 @@ The application is fully portable:
 | Delete Backup | The remembered backup location can be deleted with one button |
 | Disk space check | Estimates copy/backup space needs and blocks the update if there is not enough free space |
 | Download Latest | Fetches the latest stable release from the official GitLab repo, compares versions, downloads the Windows x64 portable ZIP, verifies MD5, extracts it, and sets it as the Package |
-| Auto-cleanup | After a successful upgrade, the downloaded package (zip + extracted folder) is removed automatically; the **Delete Package** button cleans it up manually at any time |
+| Auto-cleanup | After a successful update, the downloaded package (zip + extracted folder) is removed automatically; the **Delete Package** button cleans it up manually at any time |
 | Progress logging | Text-based status log; live download progress bar with percent lines; robocopy output streamed live |
 | Themes | System / Light / Dark |
 | Portable settings | `settings.json` next to the exe; no registry or `%AppData%` |
@@ -47,12 +47,18 @@ The application is fully portable:
 
 The updater's main goal is to **prevent accidental data loss**. Every feature prioritizes safety over convenience:
 
-1. **Smart validation** detects swapped folders, fresh extracts, and invalid folders before anything runs — and blocks with a clear explanation.
-2. **Detailed messages** explain *what was found*, *why it is a problem*, and *what to do next*.
-3. **Optional backup** (off by default) creates a recovery point inside `Current\Backup` **before** anything is deleted.
-4. **The data folders are never touched** — `Emulators`, `ROMs`, and the user-data folder (`ES-DE` / `.emulationstation`) are excluded from both the delete and the copy steps.
-5. **Old program files are deleted before copying** — no obsolete files remain after an update.
-6. **The data folder is renamed, never copied over** — and only when the target name is different and does not already exist.
+1. **Fail-closed validation** — any location or path that cannot be *proven* safe is refused with a clear explanation, whether picked or pasted. False rejection is always preferred over false acceptance.
+2. **Hard location gates** — the destructive Current folder is refused on the system drive root, inside Windows / Program Files / ProgramData / the user profile / `$Recycle.Bin`; the Package is refused only as a drive root.
+3. **Physical identity checks** — the Current and Package folders must be two different physical folders (volume serial + file index, resolved through junctions, short names and drive aliases), and neither may contain the other.
+4. **Detailed messages** explain *what was found*, *why it is a problem*, and *what to do next*.
+5. **Optional backup** (off by default) creates a recovery point inside `Current\Backup` **before** anything is deleted.
+6. **The preserved folders are never touched** — `Emulators`, `ROMs`, `Backup`, `ES-DE Updater`, and the user-data folder (`ES-DE` / `.emulationstation`) are excluded from both the delete and the copy steps.
+7. **Old program files are deleted before copying** — no stale program files (including `resources`, `themes`, `ROMs_ALL`, etc.) remain after an update; the Package's own copies take their place.
+8. **The data folder is renamed, never copied over** — and only when the target name differs and does not already exist.
+9. **The updater never deletes itself** — the running-updater overlap rule allows updates for an updater stored inside a preserved folder (`ES-DE Updater`) and refuses any layout in which the sweep would delete it.
+10. **Dogged re-verification** — the Current folder's physical identity is re-checked before the rename, the delete and the copy; if it changed mid-update (moved, replaced, rekindled), the update stops immediately.
+11. **Running-program guard** — programs running from the destructive scope block the update; programs running from preserved folders do not.
+12. **Executable rules match reality** — a Package must contain `ES-DE*.exe` (modern) or `EmulationStation*.exe` (older 2.x), so the strict rule accepts both eras; **`ES-DE Updater.exe` is excluded** so the updater cannot pass validation as the real ES-DE executable; the Current folder has no executable requirement at all — a damaged install is repaired, not refused.
 
 ---
 
@@ -91,7 +97,7 @@ The updater's main goal is to **prevent accidental data loss**. Every feature pr
 | `btnDeleteBackup` | Enabled when a backup exists at the remembered location; deletes it after confirmation |
 | `txtStatusLog` | Multiline read-only log (Consolas font) |
 
-Defaults: 800×564 window (min 640×480), centered. Path fields, buttons, backup label, version labels, and log anchor to the window edges.
+Defaults: 800×581 window (min 640×480), centered. Path fields, buttons, backup label, version labels, and log anchor to the window edges.
 
 ### 5.2 Settings Window
 
@@ -145,7 +151,7 @@ The four backup checkboxes are greyed out when `chkEnableBackup` is unchecked.
 | `BackupRoms` | Back up `ROMs` (default `true`) |
 | `BackupRomsAll` | Also back up `ROMs_ALL` (default `false`) |
 | `LastBackupLocation` | Path of the most recent backup (`{CurrentPath}\Backup`) for the **Delete Backup** button (default empty) |
-| `AutoDeletePackage` | Remove the downloaded package (zip + extracted folder) automatically after a successful upgrade (default `true`) |
+| `AutoDeletePackage` | Remove the downloaded package (zip + extracted folder) automatically after a successful update (default `true`) |
 | `LastPackageZip` | Path of the most recently downloaded ZIP (for the **Delete Package** button / auto-cleanup) |
 | `LastPackageExtracted` | Path of the extracted package folder (for the **Delete Package** button / auto-cleanup) |
 | `Theme` | `System`, `Light`, or `Dark` (default `System`) |
@@ -166,7 +172,7 @@ Save: rewrites the file on browse, settings save, or completed update.
 
 ### 7.2 Version detection
 
-- The updater finds the ES-DE executable (`ES-DE*.exe`, else the first `.exe`) in each folder and reads its `ProductVersion` from the shared Windows version resource. It reads metadata only — it does not execute the program.
+- The updater finds the ES-DE executable (`ES-DE*.exe`, else the first `.exe`) in each folder, **skipping `ES-DE Updater.exe`**, and reads its `ProductVersion` from the shared Windows version resource. It reads metadata only — it does not execute the program.
 - Comparison is **numeric component-by-component** (`Version.CompareTo`): `3.10.0` beats `3.9.0`.
 - Results influence the UI and messages:
 
@@ -180,16 +186,18 @@ Save: rewrites the file on browse, settings save, or completed update.
 
 ### 7.3 Delete and copy
 
-**Delete scope** (anything not in this list is deleted):
+**Preserved scope** (never deleted, never copied over):
 
 - `Emulators` — your emulators
 - `ES-DE` / `.emulationstation` — user data
 - `ROMs` — your games
 - `Backup` / `ES-DE Updater` — the updater's own folders
 
-**Copy scope**: every remaining root directory/file from the Package (the `ES-DE.exe`, `resources`, optionally `ROMs_ALL`, and anything else). Data folders are never copied over the existing ones, and never hidden by the delete step.
+**Replaced scope**: every other top-level item is **deleted** from Current and then re-created from the Package — program files, `resources`, `themes`, `licenses`, `es-pdf-converter` and **`ROMs_ALL`** (the package ships its own `ROMs_ALL` skeleton; by design the old one is replaced, like any other program-managed folder).
 
-**Mechanics**: directories via robocopy `/E /Z` (no `/MIR`); files via `File.Copy(overwrite)`. Missing items are skipped with a warning; robocopy failure (exit ≥ 8) aborts.
+**Copy scope**: every remaining root directory/file from the Package (the `ES-DE.exe` / `EmulationStation.exe`, `resources`, `themes`, optionally `ROMs_ALL`, and anything else).
+
+**Mechanics**: directories via robocopy `/E /Z /NFL /NDL /NJH /NJS /R:1 /W:1 /XJ` (no `/MIR`; one retry after a second — locked files fail fast; junctions are never followed); files via `File.Copy(overwrite)`. Missing source items are skipped with a warning; a robocopy failure (exit ≥ 8) aborts the update.
 
 ### 7.4 Data folder rename (v1.x/2.x vs 3.x)
 
@@ -240,14 +248,16 @@ Shown in the confirmation dialog:
 2. The **Start** button reflects the detected direction.
 3. **Start:**
    - Refresh version/direction.
-   - Full validation — any failure shows a detailed message and **nothing runs**.
+   - Full validation — any failure shows a detailed message and **nothing runs** (location gates, identity, structure, reversal, profiles, executable rules).
+   - Running-program check — programs running from the destructive scope block with a list; preserved folders and system processes are ignored.
    - Build the copy list and show the **confirmation dialog**: paths, versions/direction, copy items, backup status, data-folder rename notice (if any), disk space summary.
    - Block if space is insufficient.
+   - Capture the Current folder's identity seal.
    - Disable controls; clear the log.
    - Optional backup → `Current\Backup`.
-   - Data folder rename (if needed).
-   - Delete old program files (skip the preserved folders).
-   - Copy items from the Package (robocopy for directories, `File.Copy` for files).
+   - Data folder rename (if needed) — seal re-checked.
+   - Delete old program files (skip the preserved folders) — seal re-checked.
+   - Copy items from the Package (robocopy for directories, `File.Copy` for files) — seal re-checked.
    - Save settings.
    - Show success (or error). `UpdateBackupUi` and `UpdateDirectionUi` refresh the Delete Backup button and version labels.
 
@@ -256,6 +266,7 @@ Shown in the confirmation dialog:
 ```
 ✔ Current ES-DE verified (v3.4.1).
 ✔ Package verified (v3.2.0).
+↳ Running-program check: no program is running from the ES-DE folder.
 → Downgrade detected: 3.4.1 → 3.2.0.
 ⚠ Backup disabled — no backup created.
 → Data folder rename: ES-DE → .emulationstation.
@@ -276,6 +287,7 @@ Copying resources...
 ```
 Current ES-DE verified (v3.4.1).
 Package verified (v3.0.0).
+↳ Running-program check: no program is running from the ES-DE folder.
 → Downgrade detected: 3.4.1 → 3.0.0.
 Creating backup of Emulators...
 ✔ Backup of Emulators completed.
@@ -297,10 +309,11 @@ Copying resources...
 ### Example warnings
 
 ```
+⚠ ES-DE.exe NOT FOUND — REPAIR MODE. The package executable will be installed into the Current folder.
 ⚠ Could not delete resources\themes\some-file.ttf: The process cannot access the file because it is being used by another process.
 ⚠ Skipping readme.txt (not found in the package).
 ✖ Error: Robocopy failed while copying resources. Exit code: 16
-⚠ Data folder rename skipped — ".emulationstation" already exists in the current ES-DE folder.
+⚠ Data folder rename skipped — \".emulationstation\" already exists in the current ES-DE folder.
 ```
 
 ---
@@ -309,25 +322,26 @@ Copying resources...
 
 | Method | When | Checks |
 |--------|------|--------|
-| `ValidateOldFolder` | Browse (Current) | Non-empty path, folder exists, a root `.exe` present |
-| `ValidateNewFolder` | Browse (Package) | Same quick checks |
-| `ValidateForUpdate` | Start | Full structural validation |
+| `ValidateOldFolder` | Browse (Current) | Location gate, path form, folder exists, structure presence (`Emulators`, `ROMs`, a user-data folder). **No executable requirement** — a damaged install (repair mode) is accepted |
+| `ValidateNewFolder` | Browse (Package) | Location gate (drive root refused), folder exists, **strict executable rule** (`ES-DE*.exe` / `EmulationStation*.exe` / ES-DE version metadata); **`ES-DE Updater.exe` excluded** |
+| `ValidateForUpdate` | Start | Everything below, including the location gates again (covers settings-restored and typed/programmatic paths) |
 
-Validation steps (both folders filled):
+Validation steps (both folders filled, in order):
 
-1. Current and Package must differ.
-2. Both folders exist.
-3. Both contain a root executable (`.exe`) — any name.
-4. Both contain the exact folders `Emulators` and `ROMs`.
-5. Both contain a user data folder named `ES-DE` or `.emulationstation` (**empty is fine** — fresh packages have empty data folders).
-6. **Reversal detection**: a Current folder that looks fresh while Package looks populated ⇒ blocked with “Folders Appear Reversed”.
-7. **Both-fresh detection**: both folders fresh ⇒ Current must be the existing install.
-8. **Current profile**: `Emulators` not empty, `ROMs` contains game files.
-9. **Package profile**: `Emulators` empty, `ROMs` empty.
+1. **Location gates** — Current refused on any protected area (drive root, Windows, Program Files, ProgramData, user profile, `C:\Users`, `$Recycle.Bin`) and for updater-overlap layouts the sweep would delete; Package refused only as a drive root.
+2. **Different physical folders** — same folder (identity via volume serial + file index, resolved through junctions, 8.3 names and drive aliases) is refused; neither selection may contain the other.
+3. Both folders exist.
+4. **Package executable rule** — the Package must contain `ES-DE*.exe` (modern) or `EmulationStation*.exe` (older 2.x) or an exe whose version metadata identifies ES-DE; **`ES-DE Updater.exe` is excluded** (it is a tool, not ES-DE itself); `random.exe` is refused. **Current has no executable requirement** (repair mode).
+5. Both contain the folders `Emulators` and `ROMs`.
+6. Both contain a user data folder named `ES-DE` or `.emulationstation` (**empty is fine** — fresh packages have empty data folders).
+7. **Reversal detection** — a Current folder that looks fresh while Package looks populated ⇒ blocked with “Folders Appear Reversed”.
+8. **Both-fresh detection** — both folders look fresh ⇒ Current must be the existing install.
+9. **Current profile** — `Emulators` not empty, `ROMs` contains game files.
+10. **Package profile** — `Emulators` empty, `ROMs` empty (each must look like a freshly extracted release).
 
-The data folder check is purely structural (a recognized name present). Reversal and profile checks use `ROMs` file counts and `Emulators` subfolder counts; the data check never weakens them.
+The same gates apply at Start (`ValidateForUpdate` calls the location gates itself), so Browse-less paths — including paths restored from `settings.json` — cannot bypass the location checks. Browse dialogs are additionally box-aware: Current refusals are titled **Invalid Current ES-DE Folder**, Package refusals **Invalid Package Folder**, and a Current pick that lands on the data folder (`ES-DE` or `.emulationstation`) gets a hint pointing at the package root.
 
-**ROM detection:** supported extensions are read from the installation's own `resources\systems\windows\es_systems.xml` (every `<extension>`), with a built-in fallback list when the file is missing or unreadable. `ROMs` is scanned recursively.
+**ROM detection:** supported extensions are read from the installation's own `resources\systems\windows\es_systems.xml` (every `<extension>`), falling back to `resources\systems\es_systems.xml`, with a built-in fallback list when both files are missing or unreadable. `ROMs` is scanned recursively.
 
 ---
 
@@ -335,21 +349,23 @@ The data folder check is purely structural (a recognized name present). Reversal
 
 ```
 C:\Current ES-DE\          ← Existing installation (destination)
-├── ES-DE.exe / <any .exe>    ← fresh copy from the Package
+├── ES-DE.exe              ← fresh copy (restored in repair mode when missing)
 ├── Emulators\             ← preserved
 ├── ES-DE\ / .emulationstation\ ← preserved (renamed only when versions differ)
 ├── ROMs\                   ← preserved
-├── resources\             ← fresh copy
+├── ROMs_ALL\               ← replaced by the Package (by design)
+├── resources\  themes\ …  ← fresh copies
 ├── Backup\ (optional)     ← the updater's backup
 └── ES-DE Updater\ (optional) ← user-provided; preserved
 
 C:\Package\                ← Extracted package (source)
-├── <any .exe>               ← copied from here
+├── ES-DE.exe / EmulationStation.exe ← copied from here (strict name rule)
 ├── Emulators\             ← NOT copied
 ├── ES-DE\ / .emulationstation\ ← NOT copied
 ├── ROMs\                  ← NOT copied
+├── ROMs_ALL\ (optional)   ← copied (replaces Current's)
 ├── resources\             ← copied
-└── ROMs_ALL\ (optional)   ← copied (new system folders)
+└── themes\ …              ← copied
 ```
 
 After an update the Current folder contains only fresh program files from the selected package plus the preserved data — no obsolete program files remain.
@@ -358,12 +374,17 @@ After an update the Current folder contains only fresh program files from the se
 
 ## 11. Error Handling
 
-| Scenario | Behavior |
-|----------|----------|
 | Current or Package empty | Detailed message before the update starts |
-| No root executable (`.exe`) | Warning on browse; error on update |
+| Path invalid, too long, or with quotes/wildcards/control chars | Refused with explanation (canonicalization) |
+| Drive root / protected area (`C:\Windows`, Program Files, ProgramData, profile, `$Recycle.Bin`) as Current | Blocked with a location-specific message — also at Start for typed/restored paths |
+| Junction unresolved, link loop, or a folder link broken | Blocked — the updater will not run through a link it cannot verify |
+| Update would delete the updater itself | Blocked by the updater-overlap rule |
+| Programs running from the destructive scope | Blocked with a list; no Continue-anyway. Programs under preserved folders are ignored |
+| Current folder identity changed mid-update | Aborts immediately — “The Current folder changed on disk after it was validated” |
+| No ES-DE/EmulationStation executable in Package | Blocked on Browse and on update |
+| Current without executable | Accepted as **repair mode** — banner + status show the warning; the executable is restored from the Package |
 | No data folder (`ES-DE`/`.emulationstation`) | Blocked with names + era explanation |
-| Same folder in both | Blocked |
+| Same physical folder in both | Blocked (identity check — catches junctions, 8.3 names, drive aliases) |
 | Reversed folders | Blocked with “Folders Appear Reversed” + comparison |
 | Both fresh | Blocked with “Current must be the installation” |
 | Current `Emulators` empty / no games | Blocked with explanation |
@@ -373,6 +394,7 @@ After an update the Current folder contains only fresh program files from the se
 | All program files fail to delete | Update aborted — cannot proceed safely |
 | Missing source item | Warning, skip |
 | Robocopy exit ≥ 8 | Stop, error |
+| Robocopy locked file | Retries once (`/R:1 /W:1`) and fails in seconds |
 | Robocopy hangs | Times out after 30 minutes; process killed |
 | Version resource unreadable | Unknown version; falls back to Start Repair; still functional |
 | User cancels picker/confirmation | Nothing changes |
@@ -400,8 +422,13 @@ ESDEUpdater/
 ├── ValidationResult.cs
 ├── FolderAnalysis.cs
 ├── FolderAnalyzer.cs
+├── FolderNames.cs
 ├── EsDeVersionService.cs
 ├── SupportedRomExtensions.cs
+├── PathSafety.cs
+├── ValidationGate.cs
+├── ProcessGuard.cs
+├── Diagnostics.cs
 ├── RobocopyService.cs
 ├── ReleaseService.cs
 ├── BackupService.cs
@@ -419,14 +446,19 @@ ESDEUpdater/
 ## 13. Source File Reference
 
 - `Program.cs` — Windows Forms entry point.
-- `MainForm.cs` / `.Designer.cs` — main window and orchestration. Key members: `UpdateDirectionUi` (version labels + Start button text), `UpdateBackupUi` (backup state + Delete Backup), `UpdatePackageUi` (package cleanup + Delete Package), `BuildCopyItemList`, `BuildBackupFolderList`, `DeleteOldProgramFiles`, and the data-folder rename step. Re-entrancy guard `_updateRunning`.
+- `MainForm.cs` / `.Designer.cs` — main window and orchestration. Key members: `UpdateDirectionUi` (version labels + Start button text), `UpdateBackupUi` (backup state + Delete Backup), `UpdatePackageUi` (package cleanup + Delete Package), `BuildCopyItemList`, `BuildBackupFolderList`, `DeleteOldProgramFiles`, the data-folder rename step, the running-program gate (`ProcessGuard`), the folder seal (`OldFolderSeal` / `VerifySealAgainstDisk`) re-verified before every destructive step, and the repair-mode banner. Re-entrancy guard `_updateRunning`.
 - `SettingsForm.cs` / `.Designer.cs` — settings dialog.
 - `AppSettings.cs` — settings model (section 6).
 - `SettingsService.cs` — JSON load/save beside the exe.
-- `EsDeValidation.cs` / `ValidationResult.cs` / `FolderAnalysis.cs` / `FolderAnalyzer.cs` — structural validation, reversal/profile checks, and folder analysis (executable presence, data-folder name, emulator/ROM counts).
+- `EsDeValidation.cs` / `ValidationResult.cs` / `FolderAnalysis.cs` / `FolderAnalyzer.cs` — location gates, structural validation, reversal/profile checks, and folder analysis (executable presence, data-folder name, emulator/ROM counts). Browse is box-aware (per-field messages), Start re-runs the location gates for typed/restored paths.
+- `FolderNames.cs` — single source of the preserved-folder names (`Emulators`, `ES-DE`, `.emulationstation`, `ROMs`, `Backup`, `ES-DE Updater`), the `RomsAll` constant, and the two known data-folder names.
 - `EsDeVersionService.cs` — `FindExecutable`, `TryGetDisplayVersion` (ProductVersion, FileVersion), `TryParse`.
 - `SupportedRomExtensions.cs` — `es_systems.xml` + fallback extension lists.
-- `RobocopyService.cs` — `robocopy /E/Z /NFL/NDL/NJH/NJS` with a 30-minute timeout (exit codes 0–7 are success, ≥8 is failure).
+- `PathSafety.cs` — fail-closed path canonicalization: rejects unsafe forms (quotes/wildcards/control chars/UNC/GLOBALROOT), expands 8.3 names, resolves every reparse point manually, and exposes `DirectoryIdentity` (volume serial + file index) for physical-equality checks.
+- `ValidationGate.cs` — hard location rules: protected-area refusals for Current, drive-root refusal for Package, same-physical-folder and mutual-nesting refusals, and the updater-overlap rule (updater under a preserved name is fine; any layout the sweep would delete is refused).
+- `ProcessGuard.cs` — running-program scan limited to the destructive scope; preserved folders and uninspectable system processes are ignored.
+- `Diagnostics.cs` — injectable status-log sink used by all services.
+- `RobocopyService.cs` — `robocopy /E /Z /NFL /NDL /NJH /NJS /R:1 /W:1 /XJ` with a 30-minute timeout (exit codes 0–7 are success, ≥8 is failure; locked files fail fast, junctions are never followed).
 - `ReleaseService.cs` — GitLab release lookup (`GetLatestReleaseAsync`), streaming `DownloadAsync`, `VerifyMd5`, `ExtractPackage` (with single-root unwrap). Data class `EsDeReleaseInfo`.
 - `BackupService.cs` — `CreateBackupAsync`, `CheckSpace` (with margin), plus a formatted summary.
 - `DiskSpaceHelper.cs` — free space / sizes.
@@ -500,14 +532,19 @@ Steps:
 3. Version-driven direction via `ProductVersion`, numeric comparison.
 4. Data folder identified by the two known names; rename only when names differ and target absent.
 5. Data-folder validation is **name-based**, never content-required (fresh packages are empty).
-6. `.exe` check is flexible — any executable in the root works.
-7. Backup default off, stored inside the install, one-click delete.
-8. Validation uses real structure, not folder names alone.
-9. ROM extensions follow the installed `es_systems.xml` with a fallback.
-10. Settings beside exe — USB-friendly, machine-independent.
-11. Simple rename instead of copy/migrate; the status log is kept deliberately simple.
-12. Asynchronous run keeps the UI responsive.
-13. Official release info consumed from GitLab (API + `latest_release.json`) — no scraping, no third-party mirrors; prereleases skipped by tag name.
+6. Executable rules differ by role: the **Package** requires a strict ES-DE executable (`ES-DE*.exe`, `EmulationStation*.exe`, or ES-DE version metadata) — **`ES-DE Updater.exe` is excluded** so the updater cannot masquerade as ES-DE — while the **Current** folder has no executable requirement — missing/damaged executables are repaired, not refused.
+7. Everything not in the preserved list is **replaced, not skipped** — including `ROMs_ALL` and other program-managed folders (matches how official ES-DE packages are structured).
+8. Backup default off, stored inside the install, one-click delete.
+9. Validation uses real structure, not folder names alone.
+10. Same-folder detection is **physical** (volume serial + file index), not string-based — junctions, 8.3 names, casing and subst drives cannot fake it.
+11. Fail-closed path handling: any path that cannot be canonicalized through every link is refused rather than handled by guesswork.
+12. ROM extensions follow the installed `es_systems.xml` with a fallback.
+13. Settings beside exe — USB-friendly, machine-independent.
+14. Simple rename instead of copy/migrate; the status log is kept deliberately simple.
+15. Asynchronous run keeps the UI responsive.
+16. Running-updater overlap rule: the sweep may never delete the running updater — allowed only when the updater sits under a preserved name (`ES-DE Updater`).
+17. The folder seal re-verifies identity before every destructive step — an update can never write into a folder that was swapped mid-flight.
+18. Official release info consumed from GitLab (API + `latest_release.json`) — no scraping, no third-party mirrors; prereleases skipped by tag name.
 
 ---
 
@@ -566,7 +603,7 @@ The **Download Latest** button keeps ES-DE always up to date by pulling the newe
 4. On **Yes**: the ZIP streams to `packages\` beside the updater exe (`AppContext.BaseDirectory\packages`, created on demand), MD5 is verified when the official checksum is available (a mismatch asks before continuing; if no checksum could be fetched, verification is skipped with a note in the log), and the ZIP is extracted to `ES-DE-<version>-extract\`.
 5. The extracted package is validated with `EsDeValidation.ValidateNewFolder`; the validated ES-DE root is then set as the **Upgrade/Downgrade Package** path (`txtNewFolder`), the direction UI refreshes, the ZIP + extraction-container paths are recorded (`LastPackageZip`, `LastPackageExtracted` — the latter is the `ES-DE-<version>-extract\` container so cleanup removes everything), and settings are saved.
 6. The user confirms and presses **Start Upgrade** — the normal update flow takes over.
-7. **Cleanup** — after a successful upgrade, if `AutoDeletePackage` is on (default) the ZIP + extraction container (including the inner `ES-DE` root) are removed automatically and the Package path is cleared. The **Delete Package** button can also remove the downloaded package at any time (useful before running the upgrade or for early cleanup). Failures and cancelled downloads never delete anything.
+7. **Cleanup** — after a successful update, if `AutoDeletePackage` is on (default) the ZIP + extraction container (including the inner `ES-DE` root) are removed automatically and the Package path is cleared. The **Delete Package** button can also remove the downloaded package at any time (useful before running the upgrade or for early cleanup). Failures and cancelled downloads never delete anything.
 
 ### 21.3 Notes
 

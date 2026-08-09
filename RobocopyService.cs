@@ -33,7 +33,7 @@ public static class RobocopyService
         process.StartInfo = new ProcessStartInfo
         {
             FileName = "robocopy",
-            Arguments = $"\"{source}\" \"{destination}\" /E /Z /NFL /NDL /NJH /NJS",
+            Arguments = $"\"{source}\" \"{destination}\" /E /Z /NFL /NDL /NJH /NJS /R:1 /W:1 /XJ",
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

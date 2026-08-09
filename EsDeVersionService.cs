@@ -16,7 +16,14 @@ public static class EsDeVersionService
             string? fallback = null;
             foreach (var file in Directory.EnumerateFiles(rootFolderPath, "*.exe"))
             {
-                if (Path.GetFileName(file).StartsWith("ES-DE", StringComparison.OrdinalIgnoreCase))
+                var name = Path.GetFileName(file);
+
+                if (name.StartsWith("ES-DE Updater", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (name.StartsWith("ES-DE", StringComparison.OrdinalIgnoreCase))
                 {
                     return file;
                 }

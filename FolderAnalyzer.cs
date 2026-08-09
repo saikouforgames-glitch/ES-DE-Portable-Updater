@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ESDEUpdater;
 
 public static class FolderAnalyzer
@@ -20,17 +22,72 @@ public static class FolderAnalyzer
         return null;
     }
 
-    public static bool HasExecutableInRoot(string rootPath)
+    /// <summary>
+    /// True when a package executable sits directly in the folder root:
+    /// "ES-DE*.exe" (modern releases), "EmulationStation*.exe" (legacy 2.x releases),
+    /// or any .exe whose version metadata identifies it as ES-DE / EmulationStation.
+    /// The updater's own executable ("ES-DE Updater.exe") is excluded.
+    /// </summary>
+    public static bool HasEsDeExecutable(string rootPath)
     {
         try
         {
-            return Directory.EnumerateFiles(rootPath, "*.exe").Any();
+            foreach (var file in Directory.EnumerateFiles(rootPath, "*.exe"))
+            {
+                var name = Path.GetFileName(file);
+
+                if (name.StartsWith("ES-DE Updater", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (name.StartsWith("ES-DE", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("EmulationStation", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (HasEsDeVersionMetadata(file))
+                {
+                    return true;
+                }
+            }
         }
         catch (Exception ex)
         {
-            Diagnostics.Report($"Could not scan for executables in {rootPath}: {ex.Message}");
+            Diagnostics.Report($"Could not scan for ES-DE executables in {rootPath}: {ex.Message}");
             return false;
         }
+
+        return false;
+    }
+
+    private static bool HasEsDeVersionMetadata(string exePath)
+    {
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(exePath);
+
+            foreach (var value in new[] { info.ProductName, info.FileDescription, info.CompanyName })
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                if (value.Contains("ES-DE", StringComparison.OrdinalIgnoreCase) ||
+                    value.Contains("EmulationStation", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
     }
 
     public static FolderAnalysis Analyze(string rootPath, IReadOnlyCollection<string> romExtensions)
@@ -50,7 +107,7 @@ public static class FolderAnalyzer
         {
             RootPath = rootPath,
             FolderExists = true,
-            HasEsDeExecutable = HasExecutableInRoot(rootPath),
+            HasEsDeExecutable = HasEsDeExecutable(rootPath),
             HasEsDeDataFolder = dataFolderName is not null,
             EmulatorFolderCount = hasEmulators ? CountEmulatorFolders(emulatorsPath) : 0,
             RomFileCount = hasRoms ? CountRomFiles(romsPath, romExtensions) : 0

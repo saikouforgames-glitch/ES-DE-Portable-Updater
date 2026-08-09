@@ -77,6 +77,8 @@ ESDEUpdater/
 ├── BackupService.cs / RobocopyService.cs
 ├── ReleaseService.cs / EsDeVersionService.cs
 ├── FolderAnalyzer.cs / FolderAnalysis.cs / EsDeValidation.cs
+├── FolderNames.cs / PathSafety.cs / ValidationGate.cs
+├── ProcessGuard.cs / Diagnostics.cs
 ├── SupportedRomExtensions.cs / DiskSpaceHelper.cs
 ├── ThemeService.cs
 ├── Themed*.cs (Button, CheckBox, ProgressBar, TextBox)
