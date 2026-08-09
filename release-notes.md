@@ -1,35 +1,19 @@
-## ES-DE Portable Updater v1.1.0
+## ES-DE Portable Updater v1.1.1
 
 A standalone Windows utility that refreshes a portable [ES-DE](https://es-de.org/) installation — upgrades, downgrades, and same-version repairs — while preserving your games, emulators, and settings.
 
 > **Windows only** — uses Robocopy and Windows Forms (`net8.0-windows`). Requires 64-bit Windows; does not run on Linux or macOS.
 
-### Screenshots
+### What's New in v1.1.1
 
-![Main window (dark theme)](https://github.com/saikouforgames-glitch/ES-DE-Portable-Updater/raw/main/main%20menu.png)
-![Settings window](https://github.com/saikouforgames-glitch/ES-DE-Portable-Updater/raw/main/settings%20menu.png)
+**New features**
 
-### Install
+- **About dialog** — a new "About" button next to "Settings" shows the version, author, license (MIT), and quick links to the GitHub repo, documentation, and the ES-DE official site.
 
-1. Download `ES-DE-Updater-v1.1.0.zip`.
-2. Extract it anywhere.
-3. Copy the **`ES-DE Updater`** folder onto the **root** of your ES-DE program folder.
-4. Run `ES-DE Updater.exe` inside that folder.
+**Fixes**
 
-The `ES-DE Updater` folder is preserved across every update — the updater never deletes or copies it.
-
-### Features
-
-- Upgrade / Downgrade / Repair — direction detected automatically
-- Data folder rename (`ES-DE` ↔ `.emulationstation`) when moving between versions
-- Clean program refresh — old files removed, fresh copies installed
-- User data preserved — `Emulators`, `ROMs`, settings never touched
-- Folder validation — detects swapped folders, fresh extracts, missing executables
-- Optional backup — off by default, backs up selected data folders before the update
-- Disk space check — blocks the update if insufficient free space
-- Download Latest — fetches the newest stable release from GitLab, verifies MD5, extracts
-- Auto-cleanup — removes downloaded package after a successful update
-- Themes — System / Light / Dark
+- Release notes now correctly display on the GitHub Releases page.
+- Download zip now ships as a single-file executable inside the `ES-DE Updater` folder (matching v1.0.0 structure).
 
 ### What's New in v1.1.0
 

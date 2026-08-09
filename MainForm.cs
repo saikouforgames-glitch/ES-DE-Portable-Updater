@@ -121,6 +121,12 @@ public partial class MainForm : Form
         UpdateDirectionUi();
     }
 
+    private void BtnAbout_Click(object? sender, EventArgs e)
+    {
+        using var dialog = new AboutForm(_settings.Theme);
+        dialog.ShowDialog(this);
+    }
+
     private void BrowseFolder(TextBox targetTextBox, bool isOldFolder)
     {
         using var dialog = new FolderBrowserDialog
