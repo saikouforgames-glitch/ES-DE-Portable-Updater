@@ -9,6 +9,36 @@ public sealed class SpaceCheckResult
     public bool BackupEnabled { get; init; }
     public bool HasEnoughSpace { get; init; }
 
+    /// <summary>Files that could not be measured in the Package while estimating the copy size.</summary>
+    public int CopyUnmeasuredFiles { get; init; }
+
+    /// <summary>Files that could not be measured in the Current folder while estimating the backup size.</summary>
+    public int BackupUnmeasuredFiles { get; init; }
+
+    private string PartialSizesNote
+    {
+        get
+        {
+            if (CopyUnmeasuredFiles == 0 && BackupUnmeasuredFiles == 0)
+            {
+                return string.Empty;
+            }
+
+            var parts = new List<string>();
+            if (CopyUnmeasuredFiles > 0)
+            {
+                parts.Add($"{CopyUnmeasuredFiles} copy file(s)");
+            }
+
+            if (BackupUnmeasuredFiles > 0)
+            {
+                parts.Add($"{BackupUnmeasuredFiles} backup file(s)");
+            }
+
+            return $"\n  \u26a0 {string.Join(" and ", parts)} could not be measured \u2014 sizes may be too low.";
+        }
+    }
+
     public string Summary
     {
         get
@@ -19,7 +49,8 @@ public sealed class SpaceCheckResult
                     $"Copy to Current drive ({CopyDriveRoot})\n" +
                     $"  Free space: {DiskSpaceHelper.FormatBytes(CopyDriveAvailableBytes)}\n" +
                     $"  Required: {DiskSpaceHelper.FormatBytes(CopyBytesRequired)}\n" +
-                    "Backup is disabled — no additional space required.";
+                    "Backup is disabled — no additional space required." +
+                    PartialSizesNote;
             }
 
             return
@@ -27,7 +58,8 @@ public sealed class SpaceCheckResult
                 $"  Free space: {DiskSpaceHelper.FormatBytes(CopyDriveAvailableBytes)}\n" +
                 $"  Copy required: {DiskSpaceHelper.FormatBytes(CopyBytesRequired)}\n" +
                 $"  Backup required: {DiskSpaceHelper.FormatBytes(BackupBytesRequired)}\n" +
-                $"  Total required: {DiskSpaceHelper.FormatBytes(CopyBytesRequired + BackupBytesRequired)}";
+                $"  Total required: {DiskSpaceHelper.FormatBytes(CopyBytesRequired + BackupBytesRequired)}" +
+                PartialSizesNote;
         }
     }
 }
@@ -50,9 +82,9 @@ public static class BackupService
         var copySize = DiskSpaceHelper.GetItemsSize(newPath, copyItems);
         var backupSize = backupEnabled
             ? DiskSpaceHelper.GetDirectoriesSize(oldPath, backupFolders)
-            : 0;
+            : default;
 
-        var totalRequired = copySize + backupSize;
+        var totalRequired = copySize.Bytes + backupSize.Bytes;
         var margin = Math.Max(MinDiskSafetyMarginBytes, (long)(totalRequired * DiskSafetyMarginPercent));
         var hasEnough = available >= totalRequired + margin;
 
@@ -60,10 +92,12 @@ public static class BackupService
         {
             CopyDriveRoot = driveRoot,
             CopyDriveAvailableBytes = available,
-            CopyBytesRequired = copySize,
-            BackupBytesRequired = backupSize,
+            CopyBytesRequired = copySize.Bytes,
+            BackupBytesRequired = backupSize.Bytes,
             BackupEnabled = backupEnabled,
-            HasEnoughSpace = hasEnough
+            HasEnoughSpace = hasEnough,
+            CopyUnmeasuredFiles = copySize.UnmeasuredFiles,
+            BackupUnmeasuredFiles = backupSize.UnmeasuredFiles
         };
     }
 
@@ -83,6 +117,8 @@ public static class BackupService
 
         foreach (var folderName in backupFolders)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var source = Path.Combine(oldPath, folderName);
             if (!Directory.Exists(source))
             {

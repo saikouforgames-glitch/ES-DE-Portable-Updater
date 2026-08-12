@@ -1,3 +1,6 @@
 <Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/ESDEUpdater.Tests/ESDEUpdater.Tests.csproj" />
+  </Folder>
   <Project Path="ESDEUpdater.csproj" />
 </Solution>

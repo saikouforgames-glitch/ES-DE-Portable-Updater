@@ -286,29 +286,87 @@ public static class PathSafety
     }
 
     /// <summary>
+    /// Normalizes a path for comparison: absolute full path, long form (8.3
+    /// short names expanded), trailing separators trimmed. Reparse points are
+    /// not resolved here; use <see cref="Canonicalize"/> when the physical
+    /// target matters. Returns the input unchanged when it cannot be normalized.
+    /// </summary>
+    public static string NormalizeForComparison(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path ?? string.Empty;
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Report($"Could not normalize path '{path}': {ex.Message}");
+            return path;
+        }
+
+        var longForm = GetLongPathName(fullPath) ?? fullPath;
+
+        if (longForm.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) && longForm.Length > 4)
+        {
+            longForm = longForm[4..];
+        }
+
+        return TrimTrailingSeparators(longForm);
+    }
+
+    /// <summary>
     /// True when <paramref name="path"/> equals <paramref name="container"/> or lives
-    /// inside it. Both arguments must already be canonical.
+    /// inside it. Both arguments are normalized first, so equivalent <c>/</c> and <c>\</c>
+    /// representations compare consistently. Does not resolve reparse points; callers
+    /// that need physical targets must pass canonical paths.
     /// </summary>
     public static bool IsWithinOrEqual(string path, string container)
     {
-        var p = TrimTrailingSeparators(path);
-        var c = TrimTrailingSeparators(container);
+        var p = TrimTrailingSeparators(NormalizeForComparison(path));
+        var c = TrimTrailingSeparators(NormalizeForComparison(container));
 
         if (string.Equals(p, c, StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        return p.StartsWith(c + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        // A drive root (C:\ or C:/) is its own boundary: every descendant starts
+        // with the root itself, so no extra separator is appended.
+        if (c.Length == 3 && c[1] == ':')
+        {
+            return p.StartsWith(c, StringComparison.OrdinalIgnoreCase) &&
+                   p.Length > c.Length;
+        }
+
+        return p.StartsWith(c + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+               p.StartsWith(c + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string TrimTrailingSeparators(string path)
     {
+        // Length ≤ 3 covers drive roots (C:\, D:\) which must never be reduced
+        // to bare drive letters (C:) — keep exactly one separator.
         if (path.Length > 3 && (path.EndsWith('\\') || path.EndsWith('/')))
         {
-            return path.TrimEnd('\\', '/');
+            var trimmed = path.TrimEnd('\\', '/');
+
+            // Never reduce a drive root (C://, C:\\) to a bare drive letter (C:):
+            // keep exactly one separator so the root stays a valid rooted path.
+            if (trimmed.Length == 2 && trimmed[1] == ':')
+            {
+                return trimmed + Path.DirectorySeparatorChar;
+            }
+
+            return trimmed;
         }
 
+        // Length 3 roots (C:\, D:\) pass through untouched, and the guard also
+        // leaves shorter drive-relative forms (C:) alone.
         return path;
     }
 

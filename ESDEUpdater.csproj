@@ -8,10 +8,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>ES-DE Updater</AssemblyName>
     <RootNamespace>ESDEUpdater</RootNamespace>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <Product>ES-DE Portable Updater</Product>
     <Description>A standalone Windows utility that upgrades, downgrades, and repairs a portable ES-DE installation while preserving games, emulators, and settings.</Description>
     <Company>Evander Aston</Company>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
 
 </Project>

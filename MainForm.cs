@@ -2,33 +2,28 @@ namespace ESDEUpdater;
 
 public partial class MainForm : Form
 {
-    private static readonly string[] ExcludedFromCopy = FolderNames.PreservedFolders;
-
-    private enum UpdateDirection { Unknown, Same, Upgrade, Downgrade }
-
-    private sealed record UpdatePlan(
-        List<string> CopyItems,
-        List<string> BackupFolders,
-        SpaceCheckResult SpaceCheck,
-        string? CurrentDataFolder,
-        string? PackageDataFolder,
-        bool RenameDataFolder);
-
-    private sealed record OldFolderSeal(DirectoryIdentity Identity);
-
     private AppSettings _settings = new();
+    private HashSet<string> _exclusions = new(StringComparer.OrdinalIgnoreCase);
     private bool _updateRunning;
-    private int _lastReportedDownloadPercent = -1;
     private UpdateDirection _direction = UpdateDirection.Unknown;
     private string? _currentVersion;
     private string? _packageVersion;
-    private OldFolderSeal? _seal;
+    private CancellationTokenSource? _updateCancellation;
+    private int _lastReportedDownloadPercent = -1;
+    private readonly DownloadManager _downloadManager;
 
     public MainForm()
     {
         InitializeComponent();
         Diagnostics.Log = AppendStatus;
+        _downloadManager = new DownloadManager(
+            AppendStatus,
+            (message, title) =>
+                MessageBox.Show(message, title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes);
     }
+
+    private UpdateOrchestrator CreateOrchestrator() =>
+        new(_settings, _exclusions, AppendStatus);
 
     private void MainForm_Load(object? sender, EventArgs e)
     {
@@ -51,6 +46,7 @@ public partial class MainForm : Form
         }
 
         ApplyTheme();
+        RestoreExclusions();
         UpdateBackupUi();
         UpdatePackageUi();
         UpdateDirectionUi();
@@ -75,6 +71,11 @@ public partial class MainForm : Form
                 e.Cancel = true;
                 return;
             }
+
+            // The user chose to close mid-update: stop the running copy/backup
+            // operations instead of letting them continue invisible after the
+            // window is gone. Fast local steps (rename, delete) are not cancelled.
+            _updateCancellation?.Cancel();
         }
 
         Diagnostics.Log = null;
@@ -120,6 +121,126 @@ public partial class MainForm : Form
         UpdatePackageUi();
         UpdateDirectionUi();
     }
+
+    private void BtnAdvanced_Click(object? sender, EventArgs e)
+    {
+        var oldPath = txtOldFolder.Text.Trim();
+        if (string.IsNullOrWhiteSpace(oldPath) || !Directory.Exists(oldPath))
+        {
+            MessageBox.Show(
+                "Select a valid Current ES-DE folder first, then open Advanced.",
+                "Advanced",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        var gateError = ValidationGate.CheckOldLocation(oldPath);
+        if (gateError is not null)
+        {
+            MessageBox.Show(
+                gateError,
+                "Invalid Current ES-DE Folder",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        using var dialog = new AdvancedForm(_settings, oldPath, _exclusions);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        _exclusions = new HashSet<string>(dialog.ExclusionNames, StringComparer.OrdinalIgnoreCase);
+        _settings.ExcludedTopLevelNames = _exclusions
+            .Where(name => !FolderNames.IsPreservedTopLevel(name))
+            .ToList();
+        _settings.RememberExclusions = dialog.RememberExclusions;
+        PersistSettings();
+
+        AppendStatus($"Advanced: {_exclusions.Count} excluded item(s) will be kept (not deleted, not overwritten).");
+    }
+
+    /// <summary>
+    /// Restores the persisted exclusion list and validates it against the
+    /// remembered Current folder: names that no longer exist are dropped and
+    /// reported, mirroring the saved-folder warning behavior.
+    /// </summary>
+    private void RestoreExclusions()
+    {
+        _exclusions.Clear();
+
+        if (!_settings.RememberExclusions)
+        {
+            return;
+        }
+
+        _exclusions.UnionWith(_settings.ExcludedTopLevelNames);
+
+        var current = txtOldFolder.Text.Trim();
+        if (string.IsNullOrWhiteSpace(current) || !Directory.Exists(current))
+        {
+            return;
+        }
+
+        var stale = _exclusions.Where(name => !TopLevelExists(current, name)).ToList();
+        foreach (var name in stale)
+        {
+            _exclusions.Remove(name);
+        }
+
+        if (stale.Count > 0)
+        {
+            _settings.ExcludedTopLevelNames = _exclusions
+                .Where(name => !FolderNames.IsPreservedTopLevel(name))
+                .ToList();
+            AppendStatus(
+                $"⚠ {stale.Count} excluded item(s) from the last session no longer exist in the Current folder " +
+                $"and were ignored: {string.Join(", ", stale)}");
+        }
+
+        EnsureAutoExclusions(current);
+    }
+
+    /// <summary>
+    /// Keeps portable.txt redirects safe without user interaction: when
+    /// portable.txt points the data folder somewhere inside the Current folder,
+    /// that location and the portable.txt file itself are excluded from both
+    /// the delete sweep and the package copy.
+    /// </summary>
+    private void EnsureAutoExclusions(string oldPath)
+    {
+        if (string.IsNullOrWhiteSpace(oldPath) || !Directory.Exists(oldPath))
+        {
+            return;
+        }
+
+        var added = false;
+        var redirectBase = FolderAnalyzer.TryResolvePortableDataBase(oldPath, out var topLevelSegment);
+        if (redirectBase is not null)
+        {
+            if (_exclusions.Add(FolderAnalyzer.PortableTxt))
+            {
+                added = true;
+            }
+
+            if (topLevelSegment is not null && _exclusions.Add(topLevelSegment))
+            {
+                added = true;
+            }
+        }
+
+        if (added)
+        {
+            _settings.ExcludedTopLevelNames = _exclusions
+                .Where(name => !FolderNames.IsPreservedTopLevel(name))
+                .ToList();
+        }
+    }
+
+    private static bool TopLevelExists(string root, string name) =>
+        Directory.Exists(Path.Combine(root, name)) || File.Exists(Path.Combine(root, name));
 
     private void BrowseFolder(TextBox targetTextBox, bool isOldFolder)
     {
@@ -199,10 +320,12 @@ public partial class MainForm : Form
 
         AppendStatus("↳ Running-program check: no program is running from the ES-DE folder.");
 
+        EnsureAutoExclusions(oldPath);
+
         UpdatePlan plan;
         try
         {
-            plan = BuildUpdatePlan(oldPath, newPath);
+            plan = CreateOrchestrator().BuildUpdatePlan(oldPath, newPath);
         }
         catch (Exception ex)
         {
@@ -216,7 +339,8 @@ public partial class MainForm : Form
         }
 
         var confirm = MessageBox.Show(
-            BuildConfirmationMessage(oldPath, newPath, plan),
+            CreateOrchestrator().BuildConfirmationMessage(
+                oldPath, newPath, plan, _currentVersion, _packageVersion, _direction, _exclusions),
             "Update Preview",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question);
@@ -277,15 +401,21 @@ public partial class MainForm : Form
             return;
         }
 
-        _seal = new OldFolderSeal(oldIdentity.Value);
+        var seal = new OldFolderSeal(oldIdentity.Value);
 
         _updateRunning = true;
+        _updateCancellation = new CancellationTokenSource();
         SetControlsEnabled(false);
         txtStatusLog.Clear();
 
         try
         {
-            await ExecuteUpdateAsync(oldPath, newPath, plan);
+            var updateToken = _updateCancellation.Token;
+            await ExecuteUpdateAsync(oldPath, newPath, plan, seal, updateToken);
+        }
+        catch (OperationCanceledException)
+        {
+            AppendStatus("↳ Update cancelled — the update was stopped. Run the update again to complete it.");
         }
         catch (Exception ex)
         {
@@ -303,7 +433,8 @@ public partial class MainForm : Form
         finally
         {
             _updateRunning = false;
-            _seal = null;
+            _updateCancellation?.Dispose();
+            _updateCancellation = null;
             SetControlsEnabled(true);
             UpdateBackupUi();
             UpdatePackageUi();
@@ -311,166 +442,17 @@ public partial class MainForm : Form
         }
     }
 
-    private UpdatePlan BuildUpdatePlan(string oldPath, string newPath)
+private async Task ExecuteUpdateAsync(
+        string oldPath,
+        string newPath,
+        UpdatePlan plan,
+        OldFolderSeal seal,
+        CancellationToken cancellationToken = default)
     {
-        var copyItems = BuildCopyItemList(newPath);
-        var backupFolders = BuildBackupFolderList(oldPath);
-        var spaceCheck = BackupService.CheckSpace(oldPath, newPath, copyItems, backupFolders, _settings.EnableBackup);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        var currentDataFolder = FolderAnalyzer.FindEsDeDataFolder(oldPath);
-        var packageDataFolder = FolderAnalyzer.FindEsDeDataFolder(newPath);
-        var renameDataFolder = !string.IsNullOrWhiteSpace(currentDataFolder) &&
-                               !string.IsNullOrWhiteSpace(packageDataFolder) &&
-                               !string.Equals(currentDataFolder, packageDataFolder, StringComparison.OrdinalIgnoreCase);
-
-        return new UpdatePlan(copyItems, backupFolders, spaceCheck, currentDataFolder, packageDataFolder, renameDataFolder);
-    }
-
-    private const int MaxPreviewItems = 8;
-
-    private static List<string> BuildDeleteList(string oldPath)
-    {
-        var items = new List<string>();
-
-        foreach (var dirPath in Directory.EnumerateDirectories(oldPath))
-        {
-            var name = Path.GetFileName(dirPath);
-            if (!ExcludedFromCopy.Contains(name))
-            {
-                items.Add(name);
-            }
-        }
-
-        foreach (var filePath in Directory.EnumerateFiles(oldPath))
-        {
-            var name = Path.GetFileName(filePath);
-            if (!ExcludedFromCopy.Contains(name))
-            {
-                items.Add(name);
-            }
-        }
-
-        return items;
-    }
-
-    private static string TruncatedLine(IReadOnlyList<string> items, int max)
-    {
-        var shown = items.Take(max).ToList();
-        var line = string.Join(", ", shown);
-        if (items.Count > max)
-        {
-            line += $", \u2026and {items.Count - max} more";
-        }
-        return $"  {line}";
-    }
-
-    private string BuildConfirmationMessage(string oldPath, string newPath, UpdatePlan plan)
-    {
-        var sb = new System.Text.StringBuilder();
-
-        sb.AppendLine("UPDATE PREVIEW");
-        sb.AppendLine();
-
-        sb.AppendLine("Current:");
-        sb.AppendLine($"  {(_currentVersion is not null ? $"v{_currentVersion}" : "unknown version")}");
-        sb.AppendLine($"  {oldPath}");
-
-        if (!FolderAnalyzer.HasEsDeExecutable(oldPath))
-        {
-            sb.AppendLine("  \u26a0 ES-DE.exe NOT FOUND \u2014 REPAIR MODE.");
-            sb.AppendLine("  The package executable will be installed into the Current folder.");
-        }
-
-        sb.AppendLine();
-
-        sb.AppendLine("Package:");
-        sb.AppendLine($"  {(_packageVersion is not null ? $"v{_packageVersion}" : "unknown version")}");
-        sb.AppendLine($"  {newPath}");
-        sb.AppendLine();
-
-        if (_direction is UpdateDirection.Upgrade or UpdateDirection.Downgrade &&
-            _currentVersion is not null && _packageVersion is not null)
-        {
-            sb.AppendLine($"{_direction}: v{_currentVersion} \u2192 v{_packageVersion}");
-            sb.AppendLine();
-        }
-
-        sb.AppendLine("PROGRAM FILES");
-        sb.AppendLine();
-
-        var deleteItems = BuildDeleteList(oldPath);
-        if (deleteItems.Count > 0)
-        {
-            sb.AppendLine($"To remove ({deleteItems.Count}):");
-            sb.AppendLine(TruncatedLine(deleteItems, MaxPreviewItems));
-        }
-        else
-        {
-            sb.AppendLine("To remove: (nothing to remove)");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine($"To install ({plan.CopyItems.Count}):");
-        sb.AppendLine(TruncatedLine(plan.CopyItems, MaxPreviewItems));
-        sb.AppendLine();
-
-        sb.AppendLine("USER DATA \u2014 PRESERVED");
-        sb.AppendLine();
-        sb.AppendLine($"  {FolderNames.Emulators}, {plan.CurrentDataFolder ?? FolderNames.EsDe}, {FolderNames.Roms}");
-        sb.AppendLine("  These folders will NOT be deleted or copied.");
-        sb.AppendLine();
-
-        if (plan.RenameDataFolder)
-        {
-            sb.AppendLine("DATA FOLDER RENAME");
-            sb.AppendLine();
-            sb.AppendLine($"  {plan.CurrentDataFolder} \u2192 {plan.PackageDataFolder}");
-            sb.AppendLine();
-            sb.AppendLine(BuildDataFolderRenameMessage(plan.CurrentDataFolder!, plan.PackageDataFolder!, _currentVersion, _packageVersion));
-            sb.AppendLine();
-        }
-
-        sb.AppendLine("BACKUP");
-        sb.AppendLine();
-        if (!_settings.EnableBackup)
-        {
-            sb.AppendLine("  OFF \u2014 nothing will be backed up.");
-        }
-        else if (plan.BackupFolders.Count > 0)
-        {
-            sb.AppendLine($"  ON \u2014 {string.Join(", ", plan.BackupFolders)}");
-        }
-        else
-        {
-            sb.AppendLine("  \u26a0 ON \u2014 no folders selected for backup");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("DISK SPACE");
-        sb.AppendLine();
-        var sc = plan.SpaceCheck;
-        sb.AppendLine($"  Drive {sc.CopyDriveRoot}");
-        sb.AppendLine($"  Free:     {DiskSpaceHelper.FormatBytes(sc.CopyDriveAvailableBytes)}");
-        if (sc.BackupEnabled)
-        {
-            sb.AppendLine($"  Required: {DiskSpaceHelper.FormatBytes(sc.CopyBytesRequired + sc.BackupBytesRequired)}");
-        }
-        else
-        {
-            sb.AppendLine($"  Required: {DiskSpaceHelper.FormatBytes(sc.CopyBytesRequired)}");
-        }
-        sb.AppendLine();
-        sb.AppendLine(sc.HasEnoughSpace
-            ? "  \u2713 Enough space available"
-            : "  \u2717 Not enough disk space");
-
-        return sb.ToString();
-    }
-
-    private async Task ExecuteUpdateAsync(string oldPath, string newPath, UpdatePlan plan)
-    {
-        AppendStatus(BuildVersionLine("Current ES-DE", _currentVersion));
-        AppendStatus(BuildVersionLine("Package", _packageVersion));
+        AppendStatus(UpdateOrchestrator.BuildVersionLine("Current ES-DE", _currentVersion));
+        AppendStatus(UpdateOrchestrator.BuildVersionLine("Package", _packageVersion));
 
         if (!FolderAnalyzer.HasEsDeExecutable(oldPath))
         {
@@ -483,83 +465,7 @@ public partial class MainForm : Form
             AppendStatus($"→ {_direction} detected: {_currentVersion} → {_packageVersion}.");
         }
 
-        if (_settings.EnableBackup && plan.BackupFolders.Count > 0)
-        {
-            await BackupService.CreateBackupAsync(oldPath, plan.BackupFolders, AppendStatus);
-            _settings.LastBackupLocation = Path.Combine(oldPath, FolderNames.Backup);
-            AppendStatus("✔ Backup created.");
-        }
-        else if (_settings.EnableBackup)
-        {
-            AppendStatus("⚠ No folders selected for backup — nothing to back up.");
-        }
-        else
-        {
-            AppendStatus("⚠ Backup disabled — no backup created.");
-        }
-
-        if (plan.RenameDataFolder)
-        {
-            VerifySealAgainstDisk(oldPath);
-            await RenameDataFolderAsync(oldPath, plan.CurrentDataFolder!, plan.PackageDataFolder!);
-        }
-
-        VerifySealAgainstDisk(oldPath);
-        await Task.Run(() => DeleteOldProgramFiles(oldPath, AppendStatus));
-
-        VerifySealAgainstDisk(oldPath);
-        foreach (var itemName in plan.CopyItems)
-        {
-            var source = Path.Combine(newPath, itemName);
-            var destination = Path.Combine(oldPath, itemName);
-
-            if (Directory.Exists(source))
-            {
-                AppendStatus($"Copying {itemName}...");
-
-                var result = await RobocopyService.CopyTreeAsync(
-                    source,
-                    destination,
-                    AppendStatus);
-
-                if (!result.IsSuccess)
-                {
-                    throw new InvalidOperationException(
-                        $"Robocopy failed while copying {itemName}. Exit code: {result.ExitCode}");
-                }
-
-                AppendStatus($"✔ Copying {itemName} completed.");
-            }
-            else if (File.Exists(source))
-            {
-                if (string.Equals(
-                    Path.GetFullPath(destination),
-                    Path.GetFullPath(Application.ExecutablePath),
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    AppendStatus($"⚠ Skipping {itemName} (running from this file).");
-                    continue;
-                }
-
-                AppendStatus($"Copying {itemName}...");
-                await Task.Run(() => File.Copy(source, destination, overwrite: true));
-                AppendStatus($"✔ Copying {itemName} completed.");
-            }
-            else
-            {
-                AppendStatus($"⚠ Skipping {itemName} (not found in the package).");
-            }
-        }
-
-        AppendStatus("✔ Finished.");
-
-        AppendStatus(string.Empty);
-        AppendStatus("Next steps for ES-DE:");
-        AppendStatus("  → Open ES-DE and go to Utilities → Create/update system directories");
-        AppendStatus("    to register any new game systems added in this version.");
-        AppendStatus("  → Open ES-DE → Theme Downloader to update themes for new system support.");
-        AppendStatus("  → Ensure all customizations are in the ES-DE/custom_systems/ folder.");
-        AppendStatus(string.Empty);
+        await CreateOrchestrator().ExecuteUpdateAsync(oldPath, newPath, plan, seal, cancellationToken);
 
         _settings.LastOldPath = oldPath;
         _settings.LastNewPath = newPath;
@@ -593,42 +499,6 @@ public partial class MainForm : Form
             MessageBoxIcon.Information);
     }
 
-    private void VerifySealAgainstDisk(string oldPath)
-    {
-        var canonical = PathSafety.Canonicalize(oldPath, out _);
-        var currentIdentity = canonical is null
-            ? null
-            : PathSafety.GetDirectoryIdentity(canonical);
-
-        if (_seal is null || currentIdentity is null || !currentIdentity.Value.Matches(_seal.Identity))
-        {
-            throw new InvalidOperationException(
-                "The Current ES-DE folder changed on disk after it was validated." + Environment.NewLine +
-                Environment.NewLine +
-                oldPath + Environment.NewLine +
-                Environment.NewLine +
-                "The folder was moved, replaced, or linked elsewhere while the update was running. " +
-                "The update stopped before making further changes. " +
-                "Verify the folder and start the update again.");
-        }
-    }
-
-    private async Task RenameDataFolderAsync(string oldPath, string currentDataFolder, string packageDataFolder)
-    {
-        var source = Path.Combine(oldPath, currentDataFolder);
-        var target = Path.Combine(oldPath, packageDataFolder);
-
-        if (Directory.Exists(target))
-        {
-            AppendStatus($"⚠ Data folder rename skipped — \"{packageDataFolder}\" already exists in the current ES-DE folder. Your data folders stay as they are.");
-            return;
-        }
-
-        AppendStatus($"→ Data folder rename: {currentDataFolder} → {packageDataFolder}.");
-        await Task.Run(() => Directory.Move(source, target));
-        AppendStatus("✔ Data folder renamed.");
-    }
-
     private async void BtnDownloadLatest_Click(object? sender, EventArgs e)
     {
         if (_updateRunning)
@@ -644,9 +514,17 @@ public partial class MainForm : Form
 
         try
         {
-            var releaseInfo = await FetchLatestReleaseAsync();
+            var releaseInfo = await _downloadManager.FetchLatestReleaseAsync();
             if (releaseInfo is null)
             {
+                AppendStatus("✖ Could not find the latest release on GitLab.");
+                MessageBox.Show(
+                    "Could not find the latest ES-DE release on GitLab." + Environment.NewLine +
+                    Environment.NewLine +
+                    "Check your internet connection and try again.",
+                    "Check Failed",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
                 return;
             }
 
@@ -663,7 +541,7 @@ public partial class MainForm : Form
                 AppendStatus($"→ Current ES-DE version: v{_currentVersion}.");
             }
 
-            var (confirmMessage, confirmTitle) = BuildDownloadConfirmation(
+            var (confirmMessage, confirmTitle) = DownloadManager.BuildDownloadConfirmation(
                 releaseInfo,
                 _currentVersion,
                 isOutdated,
@@ -681,7 +559,45 @@ public partial class MainForm : Form
                 return;
             }
 
-            await ExecuteDownloadAsync(releaseInfo);
+            progressDownload.Style = ProgressBarStyle.Blocks;
+            progressDownload.Value = 0;
+            progressDownload.Visible = true;
+            _lastReportedDownloadPercent = -1;
+
+            var result = await _downloadManager.ExecuteDownloadAsync(releaseInfo, UpdateDownloadProgress);
+            if (result.Aborted)
+            {
+                return;
+            }
+
+            if (result.Error is not null)
+            {
+                MessageBox.Show(
+                    result.Error + Environment.NewLine + Environment.NewLine +
+                    "The downloaded package could not be validated as an ES-DE portable folder.",
+                    "Invalid Package",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return;
+            }
+
+            txtNewFolder.Text = result.PackageRoot!;
+            _settings.LastPackageZip = result.ZipPath!;
+            _settings.LastPackageExtracted = result.ExtractPath!;
+            UpdateDirectionUi();
+            PersistSettings();
+            UpdatePackageUi();
+
+            MessageBox.Show(
+                "The latest ES-DE package is ready." + Environment.NewLine +
+                Environment.NewLine +
+                $"Version: v{releaseInfo.Version}{Environment.NewLine}" +
+                $"Folder: {result.PackageRoot}" + Environment.NewLine +
+                Environment.NewLine +
+                "Confirm the settings and press Start Upgrade to apply.",
+                "Package Ready",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
@@ -701,184 +617,6 @@ public partial class MainForm : Form
             UpdateBackupUi();
             UpdateDirectionUi();
         }
-    }
-
-    private async Task<EsDeReleaseInfo?> FetchLatestReleaseAsync()
-    {
-        AppendStatus("→ Checking for the latest release on GitLab...");
-
-        var releaseInfo = await ReleaseService.GetLatestReleaseAsync();
-        if (releaseInfo is null)
-        {
-            AppendStatus("✖ Could not find the latest release on GitLab.");
-            MessageBox.Show(
-                "Could not find the latest ES-DE release on GitLab." + Environment.NewLine +
-                Environment.NewLine +
-                "Check your internet connection and try again.",
-                "Check Failed",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-            return null;
-        }
-
-        return releaseInfo;
-    }
-
-    private static (string Message, string Title) BuildDownloadConfirmation(
-        EsDeReleaseInfo releaseInfo,
-        string? currentVersion,
-        bool isOutdated,
-        bool hasCurrent)
-    {
-        if (isOutdated)
-        {
-            return (
-                $"A new version is available: v{currentVersion} → v{releaseInfo.Version}." + Environment.NewLine +
-                Environment.NewLine +
-                $"File: {releaseInfo.FileName}{Environment.NewLine}" +
-                $"Size: (determined at download){Environment.NewLine}" +
-                Environment.NewLine +
-                "Download the package, extract it, and set it as the Upgrade/Downgrade Package?",
-                "Download Latest");
-        }
-
-        if (hasCurrent)
-        {
-            return (
-                $"Your ES-DE is already up to date (v{currentVersion})." + Environment.NewLine +
-                Environment.NewLine +
-                $"Latest stable: v{releaseInfo.Version}{Environment.NewLine}" +
-                $"File: {releaseInfo.FileName}{Environment.NewLine}" +
-                Environment.NewLine +
-                "Download anyway? This can be used for a repair or reinstall.",
-                "Download Anyway");
-        }
-
-        return (
-            $"The latest stable version is v{releaseInfo.Version}." + Environment.NewLine +
-            Environment.NewLine +
-            $"File: {releaseInfo.FileName}{Environment.NewLine}" +
-            Environment.NewLine +
-            "Download, extract, and use it as the Upgrade/Downgrade Package?",
-            "Download Latest");
-    }
-
-    private async Task ExecuteDownloadAsync(EsDeReleaseInfo releaseInfo)
-    {
-        var downloadFolder = ResolveDownloadFolder();
-
-        var zipPath = Path.Combine(downloadFolder, releaseInfo.FileName);
-        var versionFolder = Path.Combine(downloadFolder, $"ES-DE-{releaseInfo.Version}");
-        var extractPath = versionFolder + "-extract";
-
-        if (Directory.Exists(extractPath))
-        {
-            await Task.Run(() => Directory.Delete(extractPath, recursive: true));
-        }
-
-        progressDownload.Style = ProgressBarStyle.Blocks;
-        progressDownload.Value = 0;
-        progressDownload.Visible = true;
-        _lastReportedDownloadPercent = -1;
-
-        try
-        {
-            await ReleaseService.DownloadAsync(
-                releaseInfo.DownloadUrl,
-                zipPath,
-                AppendStatus,
-                UpdateDownloadProgress);
-
-            var md5Valid = ReleaseService.VerifyMd5(zipPath, releaseInfo.Md5);
-            if (md5Valid is null)
-            {
-                AppendStatus("⚠ MD5 checksum not available — verification skipped.");
-            }
-            else if (md5Valid is false)
-            {
-                AppendStatus("⚠ MD5 checksum mismatch — the downloaded file may be corrupt.");
-                var proceed = MessageBox.Show(
-                    "The downloaded file's MD5 checksum does not match the official release." + Environment.NewLine +
-                    Environment.NewLine +
-                    "Continue anyway?",
-                    "Checksum Mismatch",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning);
-
-                if (proceed != DialogResult.Yes)
-                {
-                    await TryDeleteCorruptDownloadAsync(zipPath);
-                    AppendStatus("✖ Download aborted due to checksum mismatch.");
-                    return;
-                }
-            }
-            else
-            {
-                AppendStatus("✔ MD5 checksum verified.");
-            }
-
-            var packageRoot = await Task.Run(() => ReleaseService.ExtractPackage(zipPath, extractPath, AppendStatus));
-
-            var validationError = EsDeValidation.ValidateNewFolder(packageRoot);
-            if (validationError is not null)
-            {
-                AppendStatus($"✖ Extracted package is not a valid ES-DE folder: {validationError}");
-                MessageBox.Show(
-                    validationError + Environment.NewLine + Environment.NewLine +
-                    "The downloaded package could not be validated as an ES-DE portable folder.",
-                    "Invalid Package",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-                return;
-            }
-
-            txtNewFolder.Text = packageRoot;
-            _settings.LastPackageZip = zipPath;
-            _settings.LastPackageExtracted = extractPath;
-            UpdateDirectionUi();
-            PersistSettings();
-            UpdatePackageUi();
-
-            AppendStatus($"✔ Latest package ready: {packageRoot}");
-            AppendStatus($"✔ Zip saved to: {zipPath}");
-            MessageBox.Show(
-                "The latest ES-DE package is ready." + Environment.NewLine +
-                Environment.NewLine +
-                $"Version: v{releaseInfo.Version}{Environment.NewLine}" +
-                $"Folder: {packageRoot}" + Environment.NewLine +
-                Environment.NewLine +
-                "Confirm the settings and press Start Upgrade to apply.",
-                "Package Ready",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        }
-        catch
-        {
-            try { if (File.Exists(zipPath)) File.Delete(zipPath); } catch { }
-            throw;
-        }
-    }
-
-    private static async Task TryDeleteCorruptDownloadAsync(string zipPath)
-    {
-        await Task.Run(() =>
-        {
-            try
-            {
-                File.Delete(zipPath);
-            }
-            catch (Exception ex)
-            {
-                Diagnostics.Report($"Could not delete corrupt download {zipPath}: {ex.Message}");
-            }
-        });
-    }
-
-    private string ResolveDownloadFolder()
-    {
-        var folder = Path.Combine(AppContext.BaseDirectory, "packages");
-        Directory.CreateDirectory(folder);
-        return folder;
     }
 
     private void UpdateDownloadProgress(long bytes, long? total)
@@ -913,27 +651,6 @@ public partial class MainForm : Form
         }
     }
 
-    private List<string> BuildCopyItemList(string packagePath)
-    {
-        var items = new List<string>();
-
-        foreach (var directory in Directory.EnumerateDirectories(packagePath))
-        {
-            var name = Path.GetFileName(directory);
-            if (!ExcludedFromCopy.Contains(name))
-            {
-                items.Add(name);
-            }
-        }
-
-        foreach (var file in Directory.EnumerateFiles(packagePath))
-        {
-            items.Add(Path.GetFileName(file));
-        }
-
-        return items;
-    }
-
     private List<string> BuildBackupFolderList(string oldPath)
     {
         var folders = new List<string>();
@@ -944,7 +661,26 @@ public partial class MainForm : Form
 
         if (_settings.BackupEsDe)
         {
-            folders.Add(FolderAnalyzer.FindEsDeDataFolder(oldPath) ?? FolderNames.EsDe);
+            var info = FolderAnalyzer.FindEsDeDataFolderInfo(oldPath);
+            if (info is null)
+            {
+                folders.Add(FolderNames.EsDe);
+            }
+            else if (string.Equals(
+                PathSafety.NormalizeForComparison(info.BasePath),
+                PathSafety.NormalizeForComparison(oldPath),
+                StringComparison.OrdinalIgnoreCase))
+            {
+                folders.Add(info.Name);
+            }
+            else
+            {
+                var segment = FolderAnalyzer.GetTopLevelSegment(oldPath, info.BasePath);
+                if (segment is not null)
+                {
+                    folders.Add(segment);
+                }
+            }
         }
 
         if (_settings.BackupRoms)
@@ -960,69 +696,7 @@ public partial class MainForm : Form
         return folders;
     }
 
-    private void DeleteOldProgramFiles(string oldPath, Action<string>? onStatus = null)
-    {
-        var itemsDeleted = 0;
-        var itemsFailed = 0;
-
-        foreach (var dirPath in Directory.EnumerateDirectories(oldPath))
-        {
-            var name = Path.GetFileName(dirPath);
-
-            if (ExcludedFromCopy.Contains(name))
-            {
-                continue;
-            }
-
-            onStatus?.Invoke($"Deleting {name}...");
-
-            try
-            {
-                Directory.Delete(dirPath, recursive: true);
-                onStatus?.Invoke($"✔ Deleted {name}.");
-                itemsDeleted++;
-            }
-            catch (Exception ex)
-            {
-                onStatus?.Invoke($"⚠ Could not delete {name}: {ex.Message}");
-                itemsFailed++;
-            }
-        }
-
-        foreach (var filePath in Directory.EnumerateFiles(oldPath))
-        {
-            var name = Path.GetFileName(filePath);
-
-            if (ExcludedFromCopy.Contains(name))
-            {
-                continue;
-            }
-
-            onStatus?.Invoke($"Deleting {name}...");
-
-            try
-            {
-                File.Delete(filePath);
-                onStatus?.Invoke($"✔ Deleted {name}.");
-                itemsDeleted++;
-            }
-            catch (Exception ex)
-            {
-                onStatus?.Invoke($"⚠ Could not delete {name}: {ex.Message}");
-                itemsFailed++;
-            }
-        }
-
-        if (itemsDeleted == 0 && itemsFailed > 0)
-        {
-            throw new InvalidOperationException(
-                "All program files failed to be deleted. The update cannot continue because " +
-                "old and new files would conflict. Close any programs that may be using files " +
-                "in the ES-DE folder and try again.");
-        }
-    }
-
-    private void UpdateDirectionUi()
+private void UpdateDirectionUi()
     {
         _currentVersion = EsDeVersionService.TryGetDisplayVersion(txtOldFolder.Text.Trim());
         _packageVersion = EsDeVersionService.TryGetDisplayVersion(txtNewFolder.Text.Trim());
@@ -1057,33 +731,7 @@ public partial class MainForm : Form
         };
     }
 
-    private static string BuildVersionLine(string label, string? version) =>
-        version is null ? $"✔ {label} verified." : $"✔ {label} verified (v{version}).";
-
-    private static string BuildDataFolderRenameMessage(string sourceName, string targetName, string? currentVersion, string? packageVersion)
-    {
-        var currentLabel = currentVersion is not null ? $"v{currentVersion}" : "the current version";
-        var packageLabel = packageVersion is not null ? $"v{packageVersion}" : "this package";
-
-        if (string.Equals(targetName, ".emulationstation", StringComparison.OrdinalIgnoreCase))
-        {
-            return
-                $"This downgrade is from {currentLabel} to {packageLabel}." + Environment.NewLine +
-                $"{packageLabel} uses \u201c.emulationstation\u201d for user data." + Environment.NewLine +
-                "Your existing data folder will be renamed so the older" + Environment.NewLine +
-                "version can continue to use your settings, gamelists," + Environment.NewLine +
-                "and themes.";
-        }
-
-        return
-            $"This upgrade is from {currentLabel} to {packageLabel}." + Environment.NewLine +
-            $"ES-DE 3.0.0+ uses \u201cES-DE\u201d for user data." + Environment.NewLine +
-            "Your existing data folder will be renamed so the newer" + Environment.NewLine +
-            "version can continue to use your settings, gamelists," + Environment.NewLine +
-            "and themes.";
-    }
-
-    private void UpdateBackupUi()
+private void UpdateBackupUi()
     {
         var backupPath = _settings.LastBackupLocation;
         var backupExists = !string.IsNullOrWhiteSpace(backupPath) && Directory.Exists(backupPath);
@@ -1346,6 +994,7 @@ public partial class MainForm : Form
         btnBrowseNew.Enabled = enabled;
         btnStartUpdate.Enabled = enabled;
         btnSettings.Enabled = enabled;
+        btnAdvanced.Enabled = enabled;
         btnDownloadLatest.Enabled = enabled;
         btnDeleteBackup.Enabled = enabled && HasBackup();
         btnDeletePackage.Enabled = enabled && HasDownloadedPackage();

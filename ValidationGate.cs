@@ -117,7 +117,9 @@ public static class ValidationGate
             }
         }
 
-        var updaterFolder = Trim(updaterFolderOverride ?? AppContext.BaseDirectory);
+        var updaterFolder = PathSafety.Canonicalize(
+            updaterFolderOverride ?? AppContext.BaseDirectory,
+            out _) ?? PathSafety.NormalizeForComparison(updaterFolderOverride ?? AppContext.BaseDirectory);
 
         if (string.Equals(canonical, updaterFolder, StringComparison.OrdinalIgnoreCase))
         {
@@ -240,13 +242,23 @@ public static class ValidationGate
 
         if (PathSafety.IsWithinOrEqual(newPath, oldPath))
         {
-            return
-                "The Package folder is inside the Current ES-DE folder.\n\n" +
-                $"  Current: {oldPath}\n" +
-                $"  Package: {newPath}\n\n" +
-                "The updater removes old program files from the Current folder before installing, " +
-                "which would delete the package you extracted there. Select a package location " +
-                "outside your current installation.";
+            var relative = Path.GetRelativePath(oldPath, newPath);
+            var topLevelName = relative
+                .Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault();
+
+            if (topLevelName is null || !FolderNames.IsUpdaterEntry(topLevelName))
+            {
+                return
+                    "The Package folder is inside the Current ES-DE folder.\n\n" +
+                    $"  Current: {oldPath}\n" +
+                    $"  Package: {newPath}\n\n" +
+                    "The updater removes old program files from the Current folder before installing, " +
+                    "which would delete the package you extracted there. Select a package location " +
+                    "outside your current installation.\n\n" +
+                    "(Storing the package inside the updater's own \"" + FolderNames.Updater +
+                    "\" folder is allowed \u2014 that folder is preserved.)";
+            }
         }
 
         if (PathSafety.IsWithinOrEqual(oldPath, newPath))

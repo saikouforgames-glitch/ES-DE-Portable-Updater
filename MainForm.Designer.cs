@@ -20,6 +20,7 @@ partial class MainForm
     {
         lblTitle = new Label();
         btnSettings = new ThemedButton();
+        btnAdvanced = new ThemedButton();
         lblOldFolder = new Label();
         txtOldFolder = new ThemedTextBox();
         btnBrowseOld = new ThemedButton();
@@ -61,6 +62,20 @@ partial class MainForm
         btnSettings.Text = "Settings";
         btnSettings.UseVisualStyleBackColor = true;
         btnSettings.Click += BtnSettings_Click;
+        // 
+        // btnAdvanced
+        // 
+        btnAdvanced.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnAdvanced.DisabledBackColorValue = Color.FromArgb(55, 55, 55);
+        btnAdvanced.DisabledBorderColorValue = Color.FromArgb(70, 70, 70);
+        btnAdvanced.DisabledForeColorValue = Color.White;
+        btnAdvanced.Location = new Point(590, 16);
+        btnAdvanced.Name = "btnAdvanced";
+        btnAdvanced.Size = new Size(94, 25);
+        btnAdvanced.TabIndex = 1;
+        btnAdvanced.Text = "Advanced…";
+        btnAdvanced.UseVisualStyleBackColor = true;
+        btnAdvanced.Click += BtnAdvanced_Click;
         // 
         // lblOldFolder
         // 
@@ -281,6 +296,7 @@ partial class MainForm
         Controls.Add(txtOldFolder);
         Controls.Add(lblOldFolder);
         Controls.Add(btnSettings);
+        Controls.Add(btnAdvanced);
         Controls.Add(lblTitle);
         MinimumSize = new Size(640, 480);
         Name = "MainForm";
@@ -296,6 +312,7 @@ partial class MainForm
 
     private Label lblTitle;
     private ThemedButton btnSettings;
+    private ThemedButton btnAdvanced;
     private Label lblOldFolder;
     private ThemedTextBox txtOldFolder;
     private ThemedButton btnBrowseOld;

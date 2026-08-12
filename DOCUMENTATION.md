@@ -49,7 +49,7 @@ The updater's main goal is to **prevent accidental data loss**. Every feature pr
 
 1. **Fail-closed validation** — any location or path that cannot be *proven* safe is refused with a clear explanation, whether picked or pasted. False rejection is always preferred over false acceptance.
 2. **Hard location gates** — the destructive Current folder is refused on the system drive root, inside Windows / Program Files / ProgramData / the user profile / `$Recycle.Bin`; the Package is refused only as a drive root.
-3. **Physical identity checks** — the Current and Package folders must be two different physical folders (volume serial + file index, resolved through junctions, short names and drive aliases), and neither may contain the other.
+3. **Physical identity checks** — the Current and Package folders must be two different physical folders (volume serial + file index, resolved through junctions, short names and drive aliases), and neither may contain the other — **except** a Package stored inside the updater's own preserved `ES-DE Updater` folder (where downloaded packages live), which never collides with the delete or copy steps.
 4. **Detailed messages** explain *what was found*, *why it is a problem*, and *what to do next*.
 5. **Optional backup** (off by default) creates a recovery point inside `Current\Backup` **before** anything is deleted.
 6. **The preserved folders are never touched** — `Emulators`, `ROMs`, `Backup`, `ES-DE Updater`, and the user-data folder (`ES-DE` / `.emulationstation`) are excluded from both the delete and the copy steps.
@@ -84,6 +84,7 @@ The updater's main goal is to **prevent accidental data loss**. Every feature pr
 |---------|---------|
 | `lblTitle` | Title: **ES-DE Portable Updater** |
 | `btnSettings` | Opens the Settings window |
+| `btnAdvanced` | **Advanced…** — opens the Excluded Items window for the selected Current folder |
 | `lblOldFolder` / `txtOldFolder` | **Current ES-DE (In Use)** — the installation being refreshed |
 | `lblOldVersion` | Detected version of the Current folder (e.g. `v3.4.1`); blank when unreadable |
 | `btnBrowseOld` | Folder picker for the Current folder |
@@ -116,6 +117,24 @@ Defaults: 800×581 window (min 640×480), centered. Path fields, buttons, backup
 
 The four backup checkboxes are greyed out when `chkEnableBackup` is unchecked.
 
+### 5.3 Advanced Window (Excluded Items)
+
+Opened with **Advanced…** (requires a valid Current folder). Lists every top-level folder and file of the Current folder with a checkbox:
+
+| State | Meaning |
+|-------|---------|
+| Required (checked, locked) | `Emulators`, `ROMs`, `ES-DE` / `.emulationstation`, `Backup`, `ES-DE Updater` and anything else always preserved — cannot be unchecked |
+| Auto (🔒 checked, locked) | `portable.txt` redirect targets — set automatically when `portable.txt` points the data folder inside the Current folder |
+| Kept (checked) | User-selected items — never deleted **and** never overwritten by the package copy |
+| Deleted/replaced (unchecked) | Default state for everything else |
+| “– no longer exists” | Restored from a previous session but missing in the current folder — greyed, not applied, removed by leaving it unchecked |
+
+- The two data-folder rows (`.emulationstation` / `ES-DE`) show a greyed note explaining the generation-change behavior: *renamed to ES-DE when upgrading to 3.x* and *renamed to .emulationstation when downgrading to 2.x*.
+- `BtnRestoreDefaults` — **Restore Defaults** unchecks every user-selected item (required and auto-protected items stay locked+checked) and turns **Remember excluded folders and files** back on. Applies to the exclusion list only; all other settings are untouched, and nothing is persisted until **OK**.
+
+- `chkRememberExclusions` — **Remember excluded folders and files (across sessions)** (default on). When on, the list is restored at startup and validated against the remembered Current folder: names that no longer exist are dropped and reported in the log.
+- Exclusions take effect immediately after OK and are shown in the update confirmation as **EXCLUDED — KEPT (NOT DELETED, NOT OVERWRITTEN)**.
+
 ---
 
 ## 6. Settings Reference
@@ -127,6 +146,8 @@ The four backup checkboxes are greyed out when `chkEnableBackup` is unchecked.
   "LastOldPath": "C:\\Current ES-DE",
   "LastNewPath": "C:\\Package",
   "RememberLastFolders": true,
+  "RememberExclusions": true,
+  "ExcludedTopLevelNames": [],
   "EnableBackup": false,
   "BackupEmulators": true,
   "BackupEsDe": true,
@@ -145,6 +166,8 @@ The four backup checkboxes are greyed out when `chkEnableBackup` is unchecked.
 | `LastOldPath` | Last used Current ES-DE folder |
 | `LastNewPath` | Last used Package folder |
 | `RememberLastFolders` | Restore last paths on startup (default `true`) |
+| `RememberExclusions` | Restore and validate excluded top-level items on startup (default `true`) |
+| `ExcludedTopLevelNames` | Names kept during an update (never deleted, never overwritten); managed via **Advanced…** |
 | `EnableBackup` | Master switch for the backup step (default `false`) |
 | `BackupEmulators` | Back up `Emulators` (default `true`) |
 | `BackupEsDe` | Back up the user-data folder (default `true`) |
@@ -193,6 +216,10 @@ Save: rewrites the file on browse, settings save, or completed update.
 - `ROMs` — your games
 - `Backup` / `ES-DE Updater` — the updater's own folders
 
+**Excluded scope**: user-selected items from the **Advanced…** window are added to the preserved scope on top of the always-preserved folders — they are never deleted **and** never overwritten by the copy. Two exclusions are added automatically and locked when `portable.txt` redirects the data folder to a path *inside* the Current folder: `portable.txt` itself (the package's copy is not installed over it) and the top-level folder that contains the redirected data location. A redirect pointing *outside* the Current folder needs no sweep exclusion (the sweep only ever touches the Current folder) — `portable.txt` itself is still kept.
+
+When `RememberExclusions` is on, the persisted list is restored at startup and validated against the remembered Current folder: names that no longer exist there are dropped and reported in the log.
+
 **Replaced scope**: every other top-level item is **deleted** from Current and then re-created from the Package — program files, `resources`, `themes`, `licenses`, `es-pdf-converter` and **`ROMs_ALL`** (the package ships its own `ROMs_ALL` skeleton; by design the old one is replaced, like any other program-managed folder).
 
 **Copy scope**: every remaining root directory/file from the Package (the `ES-DE.exe` / `EmulationStation.exe`, `resources`, `themes`, optionally `ROMs_ALL`, and anything else).
@@ -214,7 +241,8 @@ Any root folder named `ES-DE` or `.emulationstation` is treated as the user data
 
 Safety rules:
 
-- If the target name already exists in Current, the rename is **skipped** and a note is logged — no overwriting.
+- **`portable.txt` redirects**: when `portable.txt` contains a path, that location is authoritative for the user data folder (the root folders `ES-DE` / `.emulationstation` are ignored for detection). The rename then happens at the redirected base path, and `portable.txt` + its target location are kept (see §7.3).
+- If the target name already exists at the rename location, the update **fails closed** — it stops with an error explaining that both `ES-DE` and `.emulationstation` data folders were found and that the duplicate must be resolved manually. No silent skip, no overwriting.
 - The confirmation dialog shows a **Data folder rename** section with version context (e.g. `Downgrade: this package is from before ES-DE 3.0.0 (before 17 February 2024)…`).
 - The log records `→ Data folder rename: ES-DE → .emulationstation.` and `✔ Data folder renamed.`
 
@@ -228,7 +256,7 @@ Safety rules:
 
 ### 7.6 Updater folder
 
-`ES-DE Updater.exe` may live anywhere. The `ES-DE Updater` folder is never deleted from Current and never copied from the Package — the updater itself never creates or writes to it. The folder ships inside the release ZIP; users unzip it onto the ES-DE root and their updater stays there on every upgrade, downgrade, and repair.
+`ES-DE Updater.exe` may live anywhere. The `ES-DE Updater` folder is never deleted from Current and never copied from the Package. The updater writes its downloads and extractions into `ES-DE Updater\packages\` next to the executable — this location is preserved, so a Package stored there passes the relationship check (it is never touched by the delete or copy steps). The folder ships inside the release ZIP; users unzip it onto the ES-DE root and their updater stays there on every upgrade, downgrade, and repair.
 
 ### 7.7 Disk space check
 
@@ -329,11 +357,11 @@ Copying resources...
 Validation steps (both folders filled, in order):
 
 1. **Location gates** — Current refused on any protected area (drive root, Windows, Program Files, ProgramData, user profile, `C:\Users`, `$Recycle.Bin`) and for updater-overlap layouts the sweep would delete; Package refused only as a drive root.
-2. **Different physical folders** — same folder (identity via volume serial + file index, resolved through junctions, 8.3 names and drive aliases) is refused; neither selection may contain the other.
+2. **Different physical folders** — same folder (identity via volume serial + file index, resolved through junctions, 8.3 names and drive aliases) is refused; neither selection may contain the other — **except** a Package inside the updater's own preserved `ES-DE Updater` folder (`ES-DE Updater\packages\...`), which is never in the destructive scope.
 3. Both folders exist.
 4. **Package executable rule** — the Package must contain `ES-DE*.exe` (modern) or `EmulationStation*.exe` (older 2.x) or an exe whose version metadata identifies ES-DE; **`ES-DE Updater.exe` is excluded** (it is a tool, not ES-DE itself); `random.exe` is refused. **Current has no executable requirement** (repair mode).
 5. Both contain the folders `Emulators` and `ROMs`.
-6. Both contain a user data folder named `ES-DE` or `.emulationstation` (**empty is fine** — fresh packages have empty data folders).
+6. Both contain a user data folder named `ES-DE` or `.emulationstation` (**empty is fine** — fresh packages have empty data folders). When the Current folder's `portable.txt` contains a path, that pointed-to location is used instead — no user data folder is required inside the root itself, and the error message names the referenced path when none is found there.
 7. **Reversal detection** — a Current folder that looks fresh while Package looks populated ⇒ blocked with “Folders Appear Reversed”.
 8. **Both-fresh detection** — both folders look fresh ⇒ Current must be the existing install.
 9. **Current profile** — `Emulators` not empty, `ROMs` contains game files.
@@ -414,6 +442,8 @@ ESDEUpdater/
 ├── MainForm.Designer.cs
 ├── SettingsForm.cs
 ├── SettingsForm.Designer.cs
+├── AdvancedForm.cs
+├── AdvancedForm.Designer.cs
 ├── AppSettings.cs
 ├── SettingsService.cs
 ├── ESDEUpdater.resx
@@ -433,11 +463,14 @@ ESDEUpdater/
 ├── ReleaseService.cs
 ├── BackupService.cs
 ├── DiskSpaceHelper.cs
+├── DownloadManager.cs
+├── UpdateOrchestrator.cs
 ├── ThemeService.cs
 ├── ThemedButton.cs
 ├── ThemedCheckBox.cs
 ├── ThemedProgressBar.cs
 ├── ThemedTextBox.cs
+├── tests/ESDEUpdater.Tests/  (xunit suites for the non-UI services)
 └── DOCUMENTATION.md            (this file)
 ```
 
@@ -446,8 +479,11 @@ ESDEUpdater/
 ## 13. Source File Reference
 
 - `Program.cs` — Windows Forms entry point.
-- `MainForm.cs` / `.Designer.cs` — main window and orchestration. Key members: `UpdateDirectionUi` (version labels + Start button text), `UpdateBackupUi` (backup state + Delete Backup), `UpdatePackageUi` (package cleanup + Delete Package), `BuildCopyItemList`, `BuildBackupFolderList`, `DeleteOldProgramFiles`, the data-folder rename step, the running-program gate (`ProcessGuard`), the folder seal (`OldFolderSeal` / `VerifySealAgainstDisk`) re-verified before every destructive step, and the repair-mode banner. Re-entrancy guard `_updateRunning`.
+- `MainForm.cs` / `.Designer.cs` — main window and UI orchestration. Key members: `UpdateDirectionUi` (version labels + Start button text), `UpdateBackupUi` (backup state + Delete Backup), `UpdatePackageUi` (package cleanup + Delete Package), `EnsureAutoExclusions` (portable.txt protection), and the running-program gate (`ProcessGuard`). Re-entrancy guard `_updateRunning`. The update pipeline and the download flow are delegated to `UpdateOrchestrator` / `DownloadManager`.
+- `UpdateOrchestrator.cs` — the update pipeline, no UI dependencies (status via callback): `BuildUpdatePlan` (copy list, backup-folder selection, disk-space check, data-folder rename detection), `BuildConfirmationMessage` (preview with repair-mode banner and EXCLUDED sections), and `ExecuteUpdateAsync` (backup → fail-closed data-folder rename → seal re-verified delete sweep → seal re-verified copy). Also defines `UpdateDirection`, `UpdatePlan`, and `OldFolderSeal`.
+- `DownloadManager.cs` — the GitLab download flow, no UI dependencies: `FetchLatestReleaseAsync`, `BuildDownloadConfirmation` (outdated / up-to-date / no-current states), and `ExecuteDownloadAsync` (download → MD5 verify → smart extract → package validation, with corrupt-download cleanup).
 - `SettingsForm.cs` / `.Designer.cs` — settings dialog.
+- `AdvancedForm.cs` / `.Designer.cs` — excluded-items dialog for the selected Current folder (checkbox list, Restore Defaults, remember toggle).
 - `AppSettings.cs` — settings model (section 6).
 - `SettingsService.cs` — JSON load/save beside the exe.
 - `EsDeValidation.cs` / `ValidationResult.cs` / `FolderAnalysis.cs` / `FolderAnalyzer.cs` — location gates, structural validation, reversal/profile checks, and folder analysis (executable presence, data-folder name, emulator/ROM counts). Browse is box-aware (per-field messages), Start re-runs the location gates for typed/restored paths.

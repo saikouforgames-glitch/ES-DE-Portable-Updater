@@ -1,5 +1,18 @@
 namespace ESDEUpdater;
 
+/// <summary>
+/// The measured size of a folder tree or item list. UnmeasuredFiles counts
+/// files that could not be read (locked, inaccessible); callers can distinguish
+/// a complete calculation from a partial one.
+/// </summary>
+public readonly record struct DirectorySizeResult(long Bytes, int UnmeasuredFiles)
+{
+    public bool IsComplete => UnmeasuredFiles == 0;
+
+    public static DirectorySizeResult operator +(DirectorySizeResult left, DirectorySizeResult right) =>
+        new(left.Bytes + right.Bytes, left.UnmeasuredFiles + right.UnmeasuredFiles);
+}
+
 public static class DiskSpaceHelper
 {
     public static long GetAvailableFreeSpace(string folderPath)
@@ -11,18 +24,19 @@ public static class DiskSpaceHelper
         return drive.AvailableFreeSpace;
     }
 
-    public static long GetDirectorySize(string path)
+    public static DirectorySizeResult GetDirectorySize(string path)
     {
         if (!Directory.Exists(path))
         {
-            return 0;
+            return default;
         }
 
         long size = 0;
+        var unmeasured = 0;
 
         try
         {
-            foreach (var file in Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories))
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
             {
                 try
                 {
@@ -30,22 +44,22 @@ public static class DiskSpaceHelper
                 }
                 catch
                 {
-                    // Skip inaccessible files.
+                    // Skip inaccessible files, but report that the result is partial.
+                    unmeasured++;
                 }
             }
         }
         catch
         {
-            return size;
+            return new DirectorySizeResult(size, unmeasured);
         }
 
-        return size;
+        return new DirectorySizeResult(size, unmeasured);
     }
 
-    public static long GetDirectoriesSize(string rootPath, IEnumerable<string> folderNames)
+    public static DirectorySizeResult GetDirectoriesSize(string rootPath, IEnumerable<string> folderNames)
     {
-        long total = 0;
-
+        var total = new DirectorySizeResult(0, 0);
         foreach (var folderName in folderNames)
         {
             total += GetDirectorySize(Path.Combine(rootPath, folderName));
@@ -54,9 +68,9 @@ public static class DiskSpaceHelper
         return total;
     }
 
-    public static long GetItemsSize(string rootPath, IEnumerable<string> itemNames)
+    public static DirectorySizeResult GetItemsSize(string rootPath, IEnumerable<string> itemNames)
     {
-        long total = 0;
+        var total = new DirectorySizeResult(0, 0);
 
         foreach (var itemName in itemNames)
         {
@@ -70,11 +84,12 @@ public static class DiskSpaceHelper
             {
                 try
                 {
-                    total += new FileInfo(fullPath).Length;
+                    total += new DirectorySizeResult(new FileInfo(fullPath).Length, 0);
                 }
                 catch
                 {
-                    // Skip inaccessible files.
+                    // Skip inaccessible files, but report that the result is partial.
+                    total += new DirectorySizeResult(0, 1);
                 }
             }
         }

@@ -80,22 +80,24 @@ public static class ThemeService
         }
         else if (control is Button button)
         {
+            button.FlatStyle = FlatStyle.Flat;
+            button.UseVisualStyleBackColor = false;
+
             if (useDark)
             {
-                button.FlatStyle = FlatStyle.Flat;
                 button.FlatAppearance.BorderColor = Color.White;
                 button.FlatAppearance.MouseOverBackColor = Color.FromArgb(30, 30, 30);
                 button.FlatAppearance.MouseDownBackColor = Color.FromArgb(20, 20, 20);
-                button.UseVisualStyleBackColor = false;
                 button.BackColor = Color.Black;
                 button.ForeColor = Color.White;
             }
             else
             {
-                button.FlatStyle = FlatStyle.Standard;
-                button.UseVisualStyleBackColor = true;
-                button.BackColor = back;
-                button.ForeColor = fore;
+                button.FlatAppearance.BorderColor = Color.FromArgb(180, 180, 180);
+                button.FlatAppearance.MouseOverBackColor = Color.FromArgb(230, 230, 230);
+                button.FlatAppearance.MouseDownBackColor = Color.FromArgb(210, 210, 210);
+                button.BackColor = Color.FromArgb(240, 240, 240);
+                button.ForeColor = Color.FromArgb(30, 30, 30);
             }
 
             if (button is ThemedButton themed)
@@ -110,6 +112,11 @@ public static class ThemeService
                     ? Color.FromArgb(70, 70, 70)
                     : Color.FromArgb(200, 200, 200);
             }
+        }
+        else if (control is CheckedListBox checkedListBox)
+        {
+            checkedListBox.BackColor = controlBack;
+            checkedListBox.ForeColor = fore;
         }
         else if (control is Label or GroupBox or CheckBox or RadioButton)
         {

@@ -25,4 +25,21 @@ public static class FolderNames
         Backup,
         Updater
     ];
+
+    /// <summary>
+    /// True when a top-level item is part of the updater's own footprint:
+    /// the "ES-DE Updater" folder, its executable, or any versioned variant.
+    /// Mirrors the prefix rule used by executable and version detection.
+    /// </summary>
+    public static bool IsUpdaterEntry(string? name) =>
+        !string.IsNullOrEmpty(name) &&
+        name.StartsWith(Updater, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when a top-level item name is never touched: one of the preserved
+    /// folders or an updater-related entry. Single source for the running-program
+    /// guard, the location gate, and the delete sweep.
+    /// </summary>
+    public static bool IsPreservedTopLevel(string? name) =>
+        IsUpdaterEntry(name) || PreservedFolders.Contains(name, StringComparer.OrdinalIgnoreCase);
 }

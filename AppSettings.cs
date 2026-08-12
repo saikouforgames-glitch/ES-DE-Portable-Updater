@@ -12,6 +12,8 @@ public sealed class AppSettings
     public string LastOldPath { get; set; } = string.Empty;
     public string LastNewPath { get; set; } = string.Empty;
     public bool RememberLastFolders { get; set; } = true;
+    public bool RememberExclusions { get; set; } = true;
+    public List<string> ExcludedTopLevelNames { get; set; } = [];
     public bool EnableBackup { get; set; } = false;
     public bool BackupEmulators { get; set; } = true;
     public bool BackupEsDe { get; set; } = true;

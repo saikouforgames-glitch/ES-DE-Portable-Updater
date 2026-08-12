@@ -76,15 +76,23 @@ public static class RobocopyService
         {
             await process.WaitForExitAsync(linkedCts.Token);
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+            // The timeout and the caller token share one linked source; kill on
+            // both. On timeout this becomes a normal failed result; on caller
+            // cancellation the exception propagates so the update pipeline stops.
             try { process.Kill(entireProcessTree: true); } catch { }
 
-            return new RobocopyResult
+            if (timeoutCts.IsCancellationRequested)
             {
-                ExitCode = -1,
-                Output = outputBuilder + Environment.NewLine + "Robocopy timed out after 30 minutes."
-            };
+                return new RobocopyResult
+                {
+                    ExitCode = -1,
+                    Output = outputBuilder + Environment.NewLine + "Robocopy timed out after 30 minutes."
+                };
+            }
+
+            throw;
         }
 
         return new RobocopyResult

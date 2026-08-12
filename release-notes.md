@@ -11,6 +11,33 @@ A standalone Windows utility that refreshes a portable [ES-DE](https://es-de.org
 - Release notes now correctly display on the GitHub Releases page.
 - Download zip now ships as a single-file executable inside the `ES-DE Updater` folder (matching v1.0.0 structure).
 
+### What's New in v1.1.2
+
+**Fixes**
+
+- **Package inside Current no longer blocked for the updater's own folder** — a Package stored under `ES-DE Updater\packages\` (where Download Latest puts it) is now accepted; the `ES-DE Updater` top-level folder is preserved by the delete and copy steps, so the package is never at risk. Other nested package locations are still refused.
+- **Running-program guard no longer flags the updater itself** — the updater's own process is exempt by path, and its executable stored directly on the ES-DE root (e.g. `D:\ES-DE\ES-DE Updater.exe`) is recognized as a preserved updater entry.
+- **Delete sweep can never delete the running updater** — the running updater's own executable is skipped by the delete step even when it sits in the destructive scope.
+- **Path comparison hardening** — process paths and the updater's own folder are normalized (long-name expansion) before comparison, closing 8.3 short-name mismatches; the updater's location is canonicalized (reparse points resolved) before the overlap checks in the location gate.
+- **Unified preserved-entry rules** — the preserve checks in the location gate, the running-program guard, the delete sweep and the copy list share one source of truth (`FolderNames.IsPreservedTopLevel` / `IsUpdaterEntry`), matching the prefix rule already used by executable and version detection.
+
+### What's New in v1.2.1
+
+**Refactor (no behavior change)**
+
+- The update pipeline moved out of `MainForm` into a new `UpdateOrchestrator` class (plan building, preview message, backup → data-folder rename → delete sweep → copy execution), and the download flow moved into a new `DownloadManager` class (release check, confirmation, download/MD5/extract/validate). `MainForm` now only handles the UI and delegates to these classes.
+- All duplicated pipeline logic was removed from `MainForm`, and unit tests were added for `UpdateOrchestrator` and `DownloadManager`.
+
+### What's New in v1.2.0
+
+**Advanced exclusions + portable.txt support**
+
+- **Advanced… window** — a new button opens the Excluded Items dialog for the selected Current folder: every top-level folder and file is listed with a checkbox. Checking an item keeps it during an update — it is never deleted **and** never overwritten by the package copy. Required items (`Emulators`, `ROMs`, `ES-DE`/`.emulationstation`, `Backup`, the updater) are locked and always kept, and the data-folder rows carry a grey note explaining the 2.x ↔ 3.x rename behavior. A **Restore Defaults** button resets the exclusion list to the default state.
+- **Remember exclusions** — a toggle in the Advanced window persists the list across sessions (default on). On startup the saved names are validated against the remembered Current folder: entries that no longer exist are dropped and reported in the log, mirroring the saved-folder warning behavior.
+- **portable.txt redirects** — when portable.txt contains a path, that location is now authoritative: the data folder is detected, validated, renamed (for 2.x ↔ 3.x crossings) and backed up at the redirected base instead of the root. `portable.txt` itself and the redirected location inside the Current folder are automatically kept (not deleted, and the package's empty portable.txt is not copied over them); redirects pointing outside the folder are kept as well.
+- **Fail-closed data-folder rename** — if both `ES-DE` and `.emulationstation` data folders exist where the rename would land, the update stops with a clear message instead of silently skipping and orphaning one of them.
+- Clearer validation errors when a Current folder's user data lives at a `portable.txt` path.
+
 ### What's New in v1.1.0
 
 **Hard failure-safety layer**

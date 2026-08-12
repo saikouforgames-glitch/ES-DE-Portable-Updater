@@ -18,7 +18,7 @@ public static class EsDeVersionService
             {
                 var name = Path.GetFileName(file);
 
-                if (name.StartsWith("ES-DE Updater", StringComparison.OrdinalIgnoreCase))
+                if (FolderNames.IsUpdaterEntry(name))
                 {
                     continue;
                 }

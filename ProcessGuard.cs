@@ -7,12 +7,26 @@ namespace ESDEUpdater;
 /// Detects programs that are currently running from a folder the updater is about
 /// to modify. Only programs whose executable lives in the destructive scope count
 /// as conflicts: preserving folders (Emulators, ROMs, user data, Backup, the
-/// updater itself) are never touched by the update, so programs running from
-/// inside them are ignored.
+/// updater) are never touched by the update, so programs running from inside them
+/// are ignored. The updater's own process is never a conflict, wherever it sits.
 /// </summary>
 public static class ProcessGuard
 {
-    private static readonly string[] PreservedFolderNames = FolderNames.PreservedFolders;
+    // Environment.ProcessPath can return null in rare host scenarios; fall back
+    // to the main module path and finally to empty (which never matches any exe,
+    // so the guard then simply cannot exempt the updater's own process — a safe
+    // degradation, never a false exemption).
+    private static readonly string OwnExecutablePath = BuildOwnExecutablePath();
+
+    private static string BuildOwnExecutablePath()
+    {
+        var processPath = Environment.ProcessPath
+            ?? Process.GetCurrentProcess().MainModule?.FileName;
+
+        return string.IsNullOrWhiteSpace(processPath)
+            ? string.Empty
+            : PathSafety.NormalizeForComparison(processPath);
+    }
 
     /// <summary>
     /// Returns display strings ("process name — full exe path") for every running
@@ -27,8 +41,7 @@ public static class ProcessGuard
         string? folder = null;
         try
         {
-            var full = Path.GetFullPath(folderPath.TrimEnd('\\', '/'));
-            folder = full.TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+            folder = PathSafety.NormalizeForComparison(folderPath) + Path.DirectorySeparatorChar;
         }
         catch (Exception ex)
         {
@@ -51,7 +64,13 @@ public static class ProcessGuard
                     continue;
                 }
 
-                var exePath = Path.GetFullPath(mainModule.FileName);
+                var exePath = PathSafety.NormalizeForComparison(mainModule.FileName);
+
+                if (string.Equals(exePath, OwnExecutablePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 if (!exePath.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -61,8 +80,7 @@ public static class ProcessGuard
                 var topLevelName = relative.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries)
                     .FirstOrDefault();
 
-                if (topLevelName is not null &&
-                    PreservedFolderNames.Contains(topLevelName, StringComparer.OrdinalIgnoreCase))
+                if (FolderNames.IsPreservedTopLevel(topLevelName))
                 {
                     continue;
                 }

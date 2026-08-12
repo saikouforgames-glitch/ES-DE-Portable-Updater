@@ -104,14 +104,24 @@ public static class EsDeValidation
             }
         }
 
-        if (FolderAnalyzer.FindEsDeDataFolder(rootPath) is null)
+        if (FolderAnalyzer.FindEsDeDataFolderInfo(rootPath) is null)
         {
-            return
+            var message =
                 "No ES-DE user data folder was found in the Current ES-DE folder.\n\n" +
                 "An ES-DE installation stores its user data (settings, gamelists, themes) in a folder named " +
                 "\"ES-DE\" (version 3.0.0 and newer) or \".emulationstation\" (older releases).\n\n" +
                 "What to do:\n" +
                 "Verify you selected the folder that contains your existing ES-DE installation.";
+
+            var redirectBase = FolderAnalyzer.TryResolvePortableDataBase(rootPath, out _);
+            if (redirectBase is not null)
+            {
+                message +=
+                    "\n\nportable.txt in this folder points the user data to:\n" + redirectBase +
+                    "\nNo \"ES-DE\" or \".emulationstation\" folder was found there either.";
+            }
+
+            return message;
         }
 
         return null;
@@ -134,6 +144,20 @@ public static class EsDeValidation
             return ValidationResult.Failure(
                 "Validation Failed",
                 "The Current ES-DE folder path is empty.\n\nPlease click Browse next to \"Current ES-DE\" and select your current installation.");
+        }
+
+        if (!oldPathIsEmpty && !Directory.Exists(oldPath.Trim()))
+        {
+            return ValidationResult.Failure(
+                "Validation Failed",
+                $"The Current ES-DE folder does not exist:\n{oldPath.Trim()}\n\nPlease verify the path and try again.");
+        }
+
+        if (!newPathIsEmpty && !Directory.Exists(newPath.Trim()))
+        {
+            return ValidationResult.Failure(
+                "Validation Failed",
+                $"The Package folder does not exist:\n{newPath.Trim()}\n\nPlease verify the path and try again.");
         }
 
         if (!oldPathIsEmpty)
@@ -360,6 +384,17 @@ public static class EsDeValidation
                   "\".emulationstation\" for older releases), even if it is empty.\n\n" +
                   "What to do:\n" +
                   "Try extracting the ES-DE archive again.";
+
+            if (isOld)
+            {
+                var redirectBase = FolderAnalyzer.TryResolvePortableDataBase(folder.RootPath, out _);
+                if (redirectBase is not null)
+                {
+                    message +=
+                        "\n\nportable.txt in this folder points the user data to:\n" + redirectBase +
+                        "\nNo \"ES-DE\" or \".emulationstation\" folder was found there either.";
+                }
+            }
 
             return ValidationResult.Failure("Validation Failed", message, folder, other);
         }
