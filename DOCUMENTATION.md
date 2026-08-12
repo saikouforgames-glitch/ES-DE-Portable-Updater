@@ -425,6 +425,7 @@ After an update the Current folder contains only fresh program files from the se
 | Robocopy locked file | Retries once (`/R:1 /W:1`) and fails in seconds |
 | Robocopy hangs | Times out after 30 minutes; process killed |
 | Version resource unreadable | Unknown version; falls back to Start Repair; still functional |
+| Download stalls (no data for 90 s) | Fails with a clear message; partial files cleaned up |
 | User cancels picker/confirmation | Nothing changes |
 | Corrupt `settings.json` | Returns empty defaults |
 | Window closed during update | Blocked by confirmation dialog |
@@ -645,6 +646,7 @@ The **Download Latest** button keeps ES-DE always up to date by pulling the newe
 
 - Uses `HttpClient` (`.NET 8` framework, no NuGet packages) and `System.IO.Compression.ZipFile` for extraction.
 - Download progress is shown live on a progress bar above the status log, with a `→ Downloading... N%` line appended to the log every 10% (start / checksum / extraction lines also appear). If the server does not report the file size, the bar switches to an indeterminate animation.
+- If no data is received for **90 seconds**, the download fails with a clear message ("Download stalled…"); interrupted or failed downloads are cleaned up automatically.
 - Extraction handles both ZIP layouts: files at the ZIP root, or a single wrapping folder (unwrapped automatically).
 - If the ZIP was extracted with a single root folder, that folder is used as the package root; otherwise the extraction directory itself.
 - The **Delete Package** button only ever removes the app's own tracked download paths (`LastPackageZip` / `LastPackageExtracted` container) — a manually-browsed package is never deleted.
