@@ -33,7 +33,7 @@ For full details see [DOCUMENTATION.md](DOCUMENTATION.md).
 
 ## Install (Release ZIP)
 
-The release ZIP ships as `ES-DE-Updater-v1.0.0.zip` containing a single folder:
+The release ZIP ships as `ES-DE-Updater-v1.2.1.zip` containing a single folder:
 
 ```
 ES-DE Updater/

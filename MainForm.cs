@@ -322,10 +322,12 @@ public partial class MainForm : Form
 
         EnsureAutoExclusions(oldPath);
 
+        var orchestrator = CreateOrchestrator();
+
         UpdatePlan plan;
         try
         {
-            plan = CreateOrchestrator().BuildUpdatePlan(oldPath, newPath);
+            plan = orchestrator.BuildUpdatePlan(oldPath, newPath);
         }
         catch (Exception ex)
         {
@@ -339,7 +341,7 @@ public partial class MainForm : Form
         }
 
         var confirm = MessageBox.Show(
-            CreateOrchestrator().BuildConfirmationMessage(
+            orchestrator.BuildConfirmationMessage(
                 oldPath, newPath, plan, _currentVersion, _packageVersion, _direction, _exclusions),
             "Update Preview",
             MessageBoxButtons.YesNo,
@@ -411,7 +413,7 @@ public partial class MainForm : Form
         try
         {
             var updateToken = _updateCancellation.Token;
-            await ExecuteUpdateAsync(oldPath, newPath, plan, seal, updateToken);
+            await ExecuteUpdateAsync(orchestrator, oldPath, newPath, plan, seal, updateToken);
         }
         catch (OperationCanceledException)
         {
@@ -443,6 +445,7 @@ public partial class MainForm : Form
     }
 
 private async Task ExecuteUpdateAsync(
+        UpdateOrchestrator orchestrator,
         string oldPath,
         string newPath,
         UpdatePlan plan,
@@ -465,7 +468,7 @@ private async Task ExecuteUpdateAsync(
             AppendStatus($"→ {_direction} detected: {_currentVersion} → {_packageVersion}.");
         }
 
-        await CreateOrchestrator().ExecuteUpdateAsync(oldPath, newPath, plan, seal, cancellationToken);
+        await orchestrator.ExecuteUpdateAsync(oldPath, newPath, plan, seal, cancellationToken);
 
         _settings.LastOldPath = oldPath;
         _settings.LastNewPath = newPath;
@@ -474,7 +477,7 @@ private async Task ExecuteUpdateAsync(
         if (_settings.AutoDeletePackage &&
             !string.IsNullOrWhiteSpace(_settings.LastPackageExtracted) &&
             !string.IsNullOrWhiteSpace(_settings.LastPackageZip) &&
-            IsPathWithinOrEqual(newPath, _settings.LastPackageExtracted))
+            PathSafety.IsWithinOrEqual(newPath, _settings.LastPackageExtracted))
         {
             var cleared = TryDeleteDownloadedPackage(
                 "auto-cleanup",
@@ -517,7 +520,6 @@ private async Task ExecuteUpdateAsync(
             var releaseInfo = await _downloadManager.FetchLatestReleaseAsync();
             if (releaseInfo is null)
             {
-                AppendStatus("✖ Could not find the latest release on GitLab.");
                 MessageBox.Show(
                     "Could not find the latest ES-DE release on GitLab." + Environment.NewLine +
                     Environment.NewLine +
@@ -651,50 +653,6 @@ private async Task ExecuteUpdateAsync(
         }
     }
 
-    private List<string> BuildBackupFolderList(string oldPath)
-    {
-        var folders = new List<string>();
-        if (_settings.BackupEmulators)
-        {
-            folders.Add(FolderNames.Emulators);
-        }
-
-        if (_settings.BackupEsDe)
-        {
-            var info = FolderAnalyzer.FindEsDeDataFolderInfo(oldPath);
-            if (info is null)
-            {
-                folders.Add(FolderNames.EsDe);
-            }
-            else if (string.Equals(
-                PathSafety.NormalizeForComparison(info.BasePath),
-                PathSafety.NormalizeForComparison(oldPath),
-                StringComparison.OrdinalIgnoreCase))
-            {
-                folders.Add(info.Name);
-            }
-            else
-            {
-                var segment = FolderAnalyzer.GetTopLevelSegment(oldPath, info.BasePath);
-                if (segment is not null)
-                {
-                    folders.Add(segment);
-                }
-            }
-        }
-
-        if (_settings.BackupRoms)
-        {
-            folders.Add(FolderNames.Roms);
-        }
-
-        if (_settings.BackupRomsAll)
-        {
-            folders.Add(FolderNames.RomsAll);
-        }
-
-        return folders;
-    }
 
 private void UpdateDirectionUi()
     {
@@ -750,7 +708,7 @@ private void UpdateBackupUi()
             return;
         }
 
-        var folders = BuildBackupFolderList(txtOldFolder.Text.Trim());
+        var folders = BackupService.BuildBackupFolderList(_settings, txtOldFolder.Text.Trim());
         if (folders.Count == 0)
         {
             lblBackupStatus.Text = "Backup: On — no folders selected";
@@ -846,7 +804,7 @@ private void UpdateBackupUi()
         var clearedNewPath = TryDeleteDownloadedPackage(
             "manual",
             clearPackagePath: hasExtracted &&
-                               IsPathWithinOrEqual(txtNewFolder.Text.Trim(), _settings.LastPackageExtracted));
+                               PathSafety.IsWithinOrEqual(txtNewFolder.Text.Trim(), _settings.LastPackageExtracted));
 
         if (clearedNewPath)
         {
@@ -895,47 +853,21 @@ private void UpdateBackupUi()
             ? _settings.LastPackageExtracted
             : null;
 
-        var zipGone = true;
-        if (!string.IsNullOrEmpty(zip) && File.Exists(zip))
-        {
-            try
-            {
-                File.Delete(zip);
-            }
-            catch (Exception ex)
-            {
-                AppendStatus($"⚠ Could not delete ZIP ({reason}): {ex.Message}");
-                zipGone = false;
-            }
-        }
+        var deleted = DownloadManager.TryDeletePackage(zip, extracted, reason, AppendStatus);
 
-        var extractedGone = true;
-        if (!string.IsNullOrEmpty(extracted) && Directory.Exists(extracted))
-        {
-            try
-            {
-                Directory.Delete(extracted, recursive: true);
-            }
-            catch (Exception ex)
-            {
-                AppendStatus($"⚠ Could not delete extracted package ({reason}): {ex.Message}");
-                extractedGone = false;
-            }
-        }
-
-        if (zipGone)
+        if (!string.IsNullOrEmpty(zip))
         {
             _settings.LastPackageZip = string.Empty;
         }
 
-        if (extractedGone)
+        if (!string.IsNullOrEmpty(extracted))
         {
             _settings.LastPackageExtracted = string.Empty;
         }
 
         UpdatePackageUi();
 
-        return clearPackagePath && extractedGone;
+        return clearPackagePath && deleted;
     }
 
     private void PersistSettings()
@@ -967,20 +899,6 @@ private void UpdateBackupUi()
     private bool HasBackup() =>
         !string.IsNullOrWhiteSpace(_settings.LastBackupLocation) &&
         Directory.Exists(_settings.LastBackupLocation);
-
-    private static bool IsPathWithinOrEqual(string path, string container)
-    {
-        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(container))
-        {
-            return false;
-        }
-
-        var pathFull = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var containerFull = Path.GetFullPath(container).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-        return pathFull.Equals(containerFull, StringComparison.OrdinalIgnoreCase) ||
-               pathFull.StartsWith(containerFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-    }
 
     private bool HasDownloadedPackage() =>
         (!string.IsNullOrWhiteSpace(_settings.LastPackageZip) &&

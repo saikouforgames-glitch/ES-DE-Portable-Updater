@@ -48,7 +48,7 @@ The application is fully portable:
 The updater's main goal is to **prevent accidental data loss**. Every feature prioritizes safety over convenience:
 
 1. **Fail-closed validation** — any location or path that cannot be *proven* safe is refused with a clear explanation, whether picked or pasted. False rejection is always preferred over false acceptance.
-2. **Hard location gates** — the destructive Current folder is refused on the system drive root, inside Windows / Program Files / ProgramData / the user profile / `$Recycle.Bin`; the Package is refused only as a drive root.
+2. **Hard location gates** — the destructive Current folder is refused when it *is* one of the protected locations itself: any drive root, Windows, Program Files (x86), ProgramData, the user profile root, `C:\Users`, `$Recycle.Bin`. Subfolders of these (e.g. `C:\Users\Leon\Downloads\ES-DE`, `C:\Program Files\ES-DE`) are accepted. The Package is refused only as a drive root.
 3. **Physical identity checks** — the Current and Package folders must be two different physical folders (volume serial + file index, resolved through junctions, short names and drive aliases), and neither may contain the other — **except** a Package stored inside the updater's own preserved `ES-DE Updater` folder (where downloaded packages live), which never collides with the delete or copy steps.
 4. **Detailed messages** explain *what was found*, *why it is a problem*, and *what to do next*.
 5. **Optional backup** (off by default) creates a recovery point inside `Current\Backup` **before** anything is deleted.
@@ -356,7 +356,7 @@ Copying resources...
 
 Validation steps (both folders filled, in order):
 
-1. **Location gates** — Current refused on any protected area (drive root, Windows, Program Files, ProgramData, user profile, `C:\Users`, `$Recycle.Bin`) and for updater-overlap layouts the sweep would delete; Package refused only as a drive root.
+1. **Location gates** — Current refused only when it is itself a protected location (drive root, Windows, Program Files (x86), ProgramData, the user profile root, `C:\Users`, `$Recycle.Bin`) or for updater-overlap layouts the sweep would delete; subfolders of protected locations are accepted. Package refused only as a drive root.
 2. **Different physical folders** — same folder (identity via volume serial + file index, resolved through junctions, 8.3 names and drive aliases) is refused; neither selection may contain the other — **except** a Package inside the updater's own preserved `ES-DE Updater` folder (`ES-DE Updater\packages\...`), which is never in the destructive scope.
 3. Both folders exist.
 4. **Package executable rule** — the Package must contain `ES-DE*.exe` (modern) or `EmulationStation*.exe` (older 2.x) or an exe whose version metadata identifies ES-DE; **`ES-DE Updater.exe` is excluded** (it is a tool, not ES-DE itself); `random.exe` is refused. **Current has no executable requirement** (repair mode).
@@ -404,7 +404,7 @@ After an update the Current folder contains only fresh program files from the se
 
 | Current or Package empty | Detailed message before the update starts |
 | Path invalid, too long, or with quotes/wildcards/control chars | Refused with explanation (canonicalization) |
-| Drive root / protected area (`C:\Windows`, Program Files, ProgramData, profile, `$Recycle.Bin`) as Current | Blocked with a location-specific message — also at Start for typed/restored paths |
+| Protected location itself (drive root, `C:\Windows`, Program Files, ProgramData, profile root, `C:\Users`, `$Recycle.Bin`) as Current | Blocked with a location-specific message — also at Start for typed/restored paths. Subfolders of these are accepted |
 | Junction unresolved, link loop, or a folder link broken | Blocked — the updater will not run through a link it cannot verify |
 | Update would delete the updater itself | Blocked by the updater-overlap rule |
 | Programs running from the destructive scope | Blocked with a list; no Continue-anyway. Programs under preserved folders are ignored |
@@ -425,6 +425,7 @@ After an update the Current folder contains only fresh program files from the se
 | Robocopy locked file | Retries once (`/R:1 /W:1`) and fails in seconds |
 | Robocopy hangs | Times out after 30 minutes; process killed |
 | Version resource unreadable | Unknown version; falls back to Start Repair; still functional |
+| Download stalls (no data for 90 s) | Fails with a clear message; partial files cleaned up |
 | User cancels picker/confirmation | Nothing changes |
 | Corrupt `settings.json` | Returns empty defaults |
 | Window closed during update | Blocked by confirmation dialog |
@@ -645,6 +646,7 @@ The **Download Latest** button keeps ES-DE always up to date by pulling the newe
 
 - Uses `HttpClient` (`.NET 8` framework, no NuGet packages) and `System.IO.Compression.ZipFile` for extraction.
 - Download progress is shown live on a progress bar above the status log, with a `→ Downloading... N%` line appended to the log every 10% (start / checksum / extraction lines also appear). If the server does not report the file size, the bar switches to an indeterminate animation.
+- If no data is received for **90 seconds**, the download fails with a clear message ("Download stalled…"); interrupted or failed downloads are cleaned up automatically.
 - Extraction handles both ZIP layouts: files at the ZIP root, or a single wrapping folder (unwrapped automatically).
 - If the ZIP was extracted with a single root folder, that folder is used as the package root; otherwise the extraction directory itself.
 - The **Delete Package** button only ever removes the app's own tracked download paths (`LastPackageZip` / `LastPackageExtracted` container) — a manually-browsed package is never deleted.

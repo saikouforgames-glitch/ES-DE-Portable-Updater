@@ -34,6 +34,48 @@ public class ValidationGateTests
     }
 
     [Fact]
+    public void CheckOldLocation_RejectsUsersRoot()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var usersRoot = Path.GetDirectoryName(profile);
+
+        if (string.IsNullOrEmpty(usersRoot) ||
+            !string.Equals(Path.GetFileName(usersRoot), "Users", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        Assert.NotNull(ValidationGate.CheckOldLocation(usersRoot));
+    }
+
+    [Fact]
+    public void CheckOldLocation_AcceptsFolderInsideUserProfile()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var dir = Path.Combine(profile, "ESDEUpdater.Tests", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            Directory.CreateDirectory(dir);
+            Assert.Null(ValidationGate.CheckOldLocation(dir));
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+            catch
+            {
+                // Best-effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void CheckOldLocation_AcceptsUnprotectedTempFolder()
     {
         using var tmp = new UnprotectedTemp();

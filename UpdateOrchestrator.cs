@@ -37,7 +37,7 @@ public sealed class UpdateOrchestrator
     public UpdatePlan BuildUpdatePlan(string oldPath, string newPath)
     {
         var copyItems = BuildCopyItemList(newPath);
-        var backupFolders = BuildBackupFolderList(oldPath);
+        var backupFolders = BackupService.BuildBackupFolderList(_settings, oldPath);
         var spaceCheck = BackupService.CheckSpace(oldPath, newPath, copyItems, backupFolders, _settings.EnableBackup);
 
         var currentInfo = FolderAnalyzer.FindEsDeDataFolderInfo(oldPath);
@@ -144,10 +144,7 @@ public sealed class UpdateOrchestrator
             }
             else if (File.Exists(source))
             {
-                if (string.Equals(
-                    PathSafety.NormalizeForComparison(destination),
-                    PathSafety.NormalizeForComparison(Environment.ProcessPath ?? string.Empty),
-                    StringComparison.OrdinalIgnoreCase))
+                if (PathSafety.EqualsNormalized(destination, Environment.ProcessPath))
                 {
                     _onStatus($"\u26a0 Skipping {itemName} (running from this file).");
                     continue;
@@ -230,10 +227,7 @@ public sealed class UpdateOrchestrator
         sb.AppendLine("  These folders will NOT be deleted or copied.");
         sb.AppendLine();
 
-        if (!string.Equals(
-            PathSafety.NormalizeForComparison(plan.CurrentDataBasePath),
-            PathSafety.NormalizeForComparison(oldPath),
-            StringComparison.OrdinalIgnoreCase))
+        if (!PathSafety.EqualsNormalized(plan.CurrentDataBasePath, oldPath))
         {
             sb.AppendLine($"  portable.txt points the user data folder to: {plan.CurrentDataBasePath}");
             sb.AppendLine("  portable.txt and its target location are kept; the package's portable.txt is NOT copied.");
@@ -354,51 +348,6 @@ public sealed class UpdateOrchestrator
         return items;
     }
 
-    private List<string> BuildBackupFolderList(string oldPath)
-    {
-        var folders = new List<string>();
-        if (_settings.BackupEmulators)
-        {
-            folders.Add(FolderNames.Emulators);
-        }
-
-        if (_settings.BackupEsDe)
-        {
-            var info = FolderAnalyzer.FindEsDeDataFolderInfo(oldPath);
-            if (info is null)
-            {
-                folders.Add(FolderNames.EsDe);
-            }
-            else if (string.Equals(
-                PathSafety.NormalizeForComparison(info.BasePath),
-                PathSafety.NormalizeForComparison(oldPath),
-                StringComparison.OrdinalIgnoreCase))
-            {
-                folders.Add(info.Name);
-            }
-            else
-            {
-                var segment = FolderAnalyzer.GetTopLevelSegment(oldPath, info.BasePath);
-                if (segment is not null)
-                {
-                    folders.Add(segment);
-                }
-            }
-        }
-
-        if (_settings.BackupRoms)
-        {
-            folders.Add(FolderNames.Roms);
-        }
-
-        if (_settings.BackupRomsAll)
-        {
-            folders.Add(FolderNames.RomsAll);
-        }
-
-        return folders;
-    }
-
     private void DeleteOldProgramFiles(string oldPath)
     {
         var itemsDeleted = 0;
@@ -437,10 +386,7 @@ public sealed class UpdateOrchestrator
                 continue;
             }
 
-            if (string.Equals(
-                PathSafety.NormalizeForComparison(filePath),
-                PathSafety.NormalizeForComparison(Environment.ProcessPath ?? string.Empty),
-                StringComparison.OrdinalIgnoreCase))
+            if (PathSafety.EqualsNormalized(filePath, Environment.ProcessPath))
             {
                 _onStatus($"\u26a0 Skipping {name} (running from this file).");
                 continue;
@@ -523,7 +469,7 @@ public sealed class UpdateOrchestrator
         var currentLabel = currentVersion is not null ? $"v{currentVersion}" : "the current version";
         var packageLabel = packageVersion is not null ? $"v{packageVersion}" : "this package";
 
-        if (string.Equals(targetName, ".emulationstation", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(targetName, FolderNames.EmulationStation, StringComparison.OrdinalIgnoreCase))
         {
             return
                 $"This downgrade is from {currentLabel} to {packageLabel}." + Environment.NewLine +

@@ -92,29 +92,17 @@ public static class ValidationGate
 
         foreach (var area in ProtectedSystemAreas)
         {
-            if (PathSafety.IsDriveRoot(area))
+            if (!string.Equals(Trim(area), Trim(canonical), StringComparison.OrdinalIgnoreCase))
             {
-                if (string.Equals(Trim(area), Trim(canonical), StringComparison.OrdinalIgnoreCase))
-                {
-                    return
-                        "The Current ES-DE folder is the system drive root.\n\n" +
-                        $"  {canonical}\n\n" +
-                        "The updater can never modify this location.";
-                }
-
                 continue;
             }
 
-            if (PathSafety.IsWithinOrEqual(canonical, area))
-            {
-                return
-                    "The Current ES-DE folder is inside a protected operating system area.\n\n" +
-                    $"  {canonical}\n\n" +
-                    $"The updater will not modify folders inside:\n" +
-                    $"  {area}\n\n" +
-                    "A portable ES-DE installation lives in its own dedicated folder, not inside " +
-                    "Windows, Program Files, ProgramData or the user profile. Please select that folder.";
-            }
+            return
+                "The Current ES-DE folder is a protected operating system location itself.\n\n" +
+                $"  {canonical}\n\n" +
+                "The updater can never modify this folder. Subfolders of it are accepted \u2014 " +
+                "select the ES-DE portable folder inside it (for example " +
+                $"{Path.Combine(area, FolderNames.EsDe)}).";
         }
 
         var updaterFolder = PathSafety.Canonicalize(

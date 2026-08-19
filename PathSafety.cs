@@ -324,6 +324,10 @@ public static class PathSafety
     /// inside it. Both arguments are normalized first, so equivalent <c>/</c> and <c>\</c>
     /// representations compare consistently. Does not resolve reparse points; callers
     /// that need physical targets must pass canonical paths.
+    ///
+    /// Note: null or empty inputs normalize to empty strings and compare equal, so
+    /// <c>IsWithinOrEqual(null, null)</c> returns true. All current callers provide
+    /// non-empty, non-drive-root paths, so this edge case is not reachable in practice.
     /// </summary>
     public static bool IsWithinOrEqual(string path, string container)
     {
@@ -346,6 +350,13 @@ public static class PathSafety
         return p.StartsWith(c + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
                p.StartsWith(c + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Compares two paths for equality after normalizing both to absolute long-form
+    /// full paths with trailing separators trimmed. Case-insensitive.
+    /// </summary>
+    public static bool EqualsNormalized(string? a, string? b) =>
+        string.Equals(NormalizeForComparison(a), NormalizeForComparison(b), StringComparison.OrdinalIgnoreCase);
 
     private static string TrimTrailingSeparators(string path)
     {

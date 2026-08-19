@@ -182,6 +182,50 @@ public sealed class DownloadManager
             }
         });
     }
+
+    /// <summary>
+    /// Attempts to delete a downloaded package (ZIP and/or extracted folder).
+    /// Non-existent items are treated as successfully deleted.
+    /// Returns true when every non-null, existing item was removed.
+    /// </summary>
+    public static bool TryDeletePackage(
+        string? zipPath,
+        string? extractedPath,
+        string? reason = null,
+        Action<string>? onStatus = null)
+    {
+        var reasonSuffix = !string.IsNullOrEmpty(reason) ? $" ({reason})" : string.Empty;
+
+        var zipGone = true;
+        if (!string.IsNullOrEmpty(zipPath) && File.Exists(zipPath))
+        {
+            try
+            {
+                File.Delete(zipPath);
+            }
+            catch (Exception ex)
+            {
+                onStatus?.Invoke($"\u26a0 Could not delete ZIP{reasonSuffix}: {ex.Message}");
+                zipGone = false;
+            }
+        }
+
+        var extractedGone = true;
+        if (!string.IsNullOrEmpty(extractedPath) && Directory.Exists(extractedPath))
+        {
+            try
+            {
+                Directory.Delete(extractedPath, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                onStatus?.Invoke($"\u26a0 Could not delete extracted package{reasonSuffix}: {ex.Message}");
+                extractedGone = false;
+            }
+        }
+
+        return zipGone && extractedGone;
+    }
 }
 
 public sealed class DownloadResult

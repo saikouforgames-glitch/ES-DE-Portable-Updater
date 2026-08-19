@@ -117,8 +117,7 @@ public static class EsDeValidation
             if (redirectBase is not null)
             {
                 message +=
-                    "\n\nportable.txt in this folder points the user data to:\n" + redirectBase +
-                    "\nNo \"ES-DE\" or \".emulationstation\" folder was found there either.";
+                    "\n\n" + BuildPortableTxtRedirectMessage(redirectBase);
             }
 
             return message;
@@ -391,8 +390,7 @@ public static class EsDeValidation
                 if (redirectBase is not null)
                 {
                     message +=
-                        "\n\nportable.txt in this folder points the user data to:\n" + redirectBase +
-                        "\nNo \"ES-DE\" or \".emulationstation\" folder was found there either.";
+                        "\n\n" + BuildPortableTxtRedirectMessage(redirectBase);
                 }
             }
 
@@ -557,4 +555,8 @@ public static class EsDeValidation
             $"  ROM files: {newAnalysis.RomFileCount:N0}\n" +
             $"  Emulator folders: {newAnalysis.EmulatorFolderCount:N0}";
     }
+
+    private static string BuildPortableTxtRedirectMessage(string redirectBase) =>
+        "portable.txt in this folder points the user data to:\n" + redirectBase +
+        "\nNo \"ES-DE\" or \".emulationstation\" folder was found there either.";
 }

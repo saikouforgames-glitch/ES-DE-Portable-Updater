@@ -139,4 +139,46 @@ public static class BackupService
             onStatus?.Invoke($"✔ Backup of {folderName} completed.");
         }
     }
+
+    public static List<string> BuildBackupFolderList(AppSettings settings, string oldPath)
+    {
+        var folders = new List<string>();
+        if (settings.BackupEmulators)
+        {
+            folders.Add(FolderNames.Emulators);
+        }
+
+        if (settings.BackupEsDe)
+        {
+            var info = FolderAnalyzer.FindEsDeDataFolderInfo(oldPath);
+            if (info is null)
+            {
+                folders.Add(FolderNames.EsDe);
+            }
+            else if (PathSafety.EqualsNormalized(info.BasePath, oldPath))
+            {
+                folders.Add(info.Name);
+            }
+            else
+            {
+                var segment = FolderAnalyzer.GetTopLevelSegment(oldPath, info.BasePath);
+                if (segment is not null)
+                {
+                    folders.Add(segment);
+                }
+            }
+        }
+
+        if (settings.BackupRoms)
+        {
+            folders.Add(FolderNames.Roms);
+        }
+
+        if (settings.BackupRomsAll)
+        {
+            folders.Add(FolderNames.RomsAll);
+        }
+
+        return folders;
+    }
 }
